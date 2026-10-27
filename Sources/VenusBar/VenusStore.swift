@@ -481,7 +481,9 @@ final class VenusStore: ObservableObject {
                 switch job {
                 case .discover:
                     self.discoveredDevices = Array((envelope.devices ?? []).prefix(16))
-                    self.error = self.discoveredDevices.isEmpty ? VL("Не отримали відповідь. Спробуй ще раз або введи IP вручну.", "No response received. Try again or enter the IP manually.") : nil
+                    self.error = self.discoveredDevices.isEmpty
+                        ? envelope.errors?.first?.message ?? VL("Відповіді немає. Перевір порт Local API та дозвіл VenusBar на локальну мережу, потім спробуй ще раз.", "No response. Check the Local API port and VenusBar’s local network permission, then try again.")
+                        : nil
                 case .read:
                     guard let report = envelope.report, let device = envelope.device else { throw VenusStoreError.message(VL("Показників ще немає.", "No readings yet.")) }
                     let identityChanged = self.device.map { !$0.isSameStation(as: device) } ?? false

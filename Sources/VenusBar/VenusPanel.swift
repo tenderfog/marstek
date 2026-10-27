@@ -325,6 +325,14 @@ struct VenusPanel: View {
                 Spacer()
                 VenusLocalAPIHelpLink(model: store.model)
             }
+            Text(VL("Вкажи той самий порт, що в MARSTEK → Local API → Ports. 30000 — лише стандартне значення.", "Use the port shown in MARSTEK → Local API → Ports. 30000 is only the default."))
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                .fixedSize(horizontal: false, vertical: true)
+            if #available(macOS 15, *), store.error != nil {
+                Text(VL("Дозволь VenusBar доступ до локальної мережі: Системні параметри → Приватність і безпека → Локальна мережа.", "Allow VenusBar access in System Settings → Privacy & Security → Local Network."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if store.isDiscovering {
                 Text(VL("Шукаємо станцію…", "Finding your station…")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
             }

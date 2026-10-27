@@ -107,7 +107,7 @@ struct VenusOnboarding: View {
                     .font(.system(size: 18, weight: .semibold))
                 Text(step == 0
                      ? VL("У застосунку Marstek відкрий свою станцію, потім натисни налаштування у верхньому куті.", "Open your station in the Marstek app, then tap Settings in the top corner.")
-                     : VL("Знайди Local API й увімкни перемикач. У полі Ports залиш 30000 або вкажи свій порт.", "Find Local API and turn it on. Keep 30000 in Ports, or enter your own port."))
+                     : VL("Увімкни Local API й подивись число в полі Ports. У VenusBar потрібно ввести саме цей порт.", "Enable Local API and check the number in Ports. Enter that same port in VenusBar."))
                     .font(.system(size: 13)).foregroundStyle(.white.opacity(0.76))
                     .fixedSize(horizontal: false, vertical: true)
                 if step == 0 {
@@ -127,7 +127,7 @@ struct VenusOnboarding: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(VL("Знайдемо станцію самі", "Let’s find your station")).font(.system(size: 18, weight: .semibold))
-                Text(VL("Увімкни Local API. Модель визначиться автоматично.", "Enable Local API. The model will be detected automatically."))
+                Text(VL("Порт має збігатися з Local API → Ports у MARSTEK. Модель визначиться автоматично.", "Use the port shown in MARSTEK → Local API → Ports. The model will be detected automatically."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
                 VenusLocalAPIHelpLink(model: store.model)
             }
@@ -177,6 +177,11 @@ struct VenusOnboarding: View {
                 Label(message, systemImage: "exclamationmark.circle")
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
                     .fixedSize(horizontal: false, vertical: true)
+                if #available(macOS 15, *) {
+                    Text(VL("Доступ на Mac: Системні параметри → Приватність і безпека → Локальна мережа → VenusBar. Після дозволу повтори пошук.", "Mac permission: System Settings → Privacy & Security → Local Network → VenusBar. After allowing access, search again."))
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }.padding(.top, 2)
     }

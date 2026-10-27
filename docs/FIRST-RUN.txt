@@ -11,7 +11,10 @@ VenusBar 0.1 — перший запуск / first launch
 3. VenusBar працює через значок блискавки в рядку меню.
 4. Обери мову, увімкни Local API у застосунку MARSTEK і натисни
    «Шукати автоматично». Mac і станція мають бути в одній мережі.
-   За потреби введи IP-адресу й UDP-порт вручну.
+   За потреби введи IP-адресу й UDP-порт вручну. Порт має збігатися
+   з MARSTEK → Local API → Ports; 30000 — лише стандартне значення.
+   У macOS 15 або новішій дозволь VenusBar доступ у «Системні параметри»
+   → «Приватність і безпека» → «Локальна мережа», потім повтори пошук.
 
 Ця тестова збірка має локальний підпис ad hoc, без Developer ID
 та нотаризації Apple. Вона не просить вимикати захист macOS.
@@ -29,6 +32,9 @@ ENGLISH
 4. Choose a language, enable Local API in the MARSTEK app, then choose
    Find automatically. Your Mac and station must share the same local
    network. You can also enter the IP address and UDP port manually.
+   Use the exact port in MARSTEK → Local API → Ports; 30000 is only
+   the default. On macOS 15 or newer, allow VenusBar in System Settings
+   → Privacy & Security → Local Network, then search again.
 
 This test build is signed ad hoc, without an Apple Developer ID or
 notarization. It does not ask you to disable macOS protection.

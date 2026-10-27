@@ -67,6 +67,7 @@ final class VenusAPI: @unchecked Sendable {
             let interfaces = try Self.interfaces()
             var devices: [String: [String: Any]] = [:]
             var errors: [[String: Any]] = []
+            var unavailableInterfaces = 0
             for interface in interfaces {
                 if devices.count >= 16 { break }
                 try self.check(token)
@@ -76,12 +77,13 @@ final class VenusAPI: @unchecked Sendable {
                     defer { wire.close() }
                     // Finish the collection window so other stations can respond;
                     // repeat only when this interface returned no valid identities.
-                    for _ in 0..<3 {
+                    var identityErrorRecorded = false
+                    for _ in 0..<Self.discoveryAttempts {
                         try self.check(token)
                         var responded = false
                         let requestID = try wire.send(method: "Marstek.GetDevice", params: ["ble_mac": "0"],
                                                       ip: interface.broadcast, port: port)
-                        let deadline = Self.now + 2
+                        let deadline = Self.now + Self.discoveryWindow
                         for _ in 0..<64 {
                             guard devices.count < 16, let packet = try wire.receive(until: deadline) else { break }
                             guard packet.port == port, let address = Self.ipv4(packet.ip),
@@ -89,17 +91,33 @@ final class VenusAPI: @unchecked Sendable {
                                   address != interface.network, address != interface.broadcastNumber else { continue }
                             do {
                                 if let reply = try Self.response(packet.data, requestID: requestID, method: "Marstek.GetDevice", source: nil) {
-                                    devices[packet.ip] = try Self.identity(reply, ip: packet.ip, port: port)
-                                    responded = true
+                                    wire.matchedResponse()
+                                    do {
+                                        devices[packet.ip] = try Self.identity(reply, ip: packet.ip, port: port)
+                                        responded = true
+                                    } catch {
+                                        if !identityErrorRecorded {
+                                            errors.append(Self.failureItem(error, method: "Marstek.GetDevice"))
+                                            identityErrorRecorded = true
+                                        }
+                                    }
                                 }
-                            } catch { continue }
+                            } catch {
+                                // response() throws only for a well-formed error matching
+                                // this request. Malformed/unmatched datagrams return nil.
+                                wire.matchedResponse()
+                                if !identityErrorRecorded {
+                                    errors.append(Self.failureItem(error, method: "Marstek.GetDevice"))
+                                    identityErrorRecorded = true
+                                }
+                            }
                         }
                         if responded || devices.count >= 16 { break }
                     }
                 } catch is CancellationError { throw CancellationError() }
-                catch { errors.append(Self.failureItem(error, method: "Marstek.GetDevice")) }
+                catch { unavailableInterfaces += 1; errors.append(Self.failureItem(error, method: "Marstek.GetDevice")) }
             }
-            if devices.isEmpty, errors.count == interfaces.count, let first = errors.first {
+            if devices.isEmpty, unavailableInterfaces == interfaces.count, let first = errors.first {
                 throw APIError(first["code"] as? String ?? "network_unavailable", first["message"] as? String ?? VL("Пошук Marstek недоступний.", "Marstek discovery is unavailable."))
             }
             return ["ok": true, "status": "discovered", "devices": devices.keys.sorted().compactMap { devices[$0] }, "errors": errors]
@@ -194,6 +212,13 @@ final class VenusAPI: @unchecked Sendable {
     }
 
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    private static let discoveryAttempts = 2
+    private static let discoveryWindow: TimeInterval = 5
+    private static func responseTimeout(method: String) -> TimeInterval { method == "Marstek.GetDevice" ? 5 : 2 }
+    private static func sendDelay(lastSend: TimeInterval?, lastResponse: TimeInterval?, now: TimeInterval) -> TimeInterval {
+        max(0, max(lastSend.map { $0 + 1 } ?? now, lastResponse.map { $0 + 1 } ?? now) - now)
+    }
 
     // Only these documented, side-effect-free reads may retry a timeout. Never
     // classify by a suffix/prefix: a future setting must remain single-send.
@@ -309,22 +334,55 @@ final class VenusAPI: @unchecked Sendable {
     }
 
     private static func identity(_ reply: [String: Any], ip: String, port: Int) throws -> [String: Any] {
-        guard let result = reply["result"] as? [String: Any], let name = ascii(result["device"], limit: 64),
+        guard let result = reply["result"] as? [String: Any],
               result["ip"] == nil || result["ip"] as? String == ip else {
             throw APIError("invalid_identity", VL("Marstek повернув некоректну модель або IP пристрою.", "Marstek returned an invalid device model or IP."))
+        }
+        // Manufacturer clients accept both field names. If both are present,
+        // equivalent known aliases are allowed, but conflicting models are not.
+        let names = try ["device_type", "device"].compactMap { key -> String? in
+            guard let raw = result[key] else { return nil }
+            guard let name = ascii(raw, limit: 64) else {
+                throw APIError("invalid_identity", VL("Marstek повернув некоректну модель або IP пристрою.", "Marstek returned an invalid device model or IP."))
+            }
+            return name
+        }
+        guard let name = names.first, names.allSatisfy({ sameModel(name, $0) }) else {
+            throw APIError("invalid_identity", VL("Marstek повернув відсутню або суперечливу модель пристрою.", "Marstek returned a missing or conflicting device model."))
         }
         var device: [String: Any] = ["name": name, "ip": ip, "port": port, "supports_pv": aNames.contains(name)]
         for key in ["ble_mac", "wifi_mac"] {
             if let value = mac(result[key]) { device[key] = value }
         }
         if let name = displayText(result["wifi_name"], limit: 128) { device["wifi_name"] = name }
-        if let raw = result["ver"] {
-            guard let version = integer(raw), (0...1_000_000).contains(version) else {
+        var versions: [Int] = []
+        var unknownVersion = false
+        for key in ["version", "ver"] {
+            guard let raw = result[key] else { continue }
+            if raw is NSNull { unknownVersion = true; continue }
+            if let version = integer(raw), (0...1_000_000).contains(version) { versions.append(version) }
+            else if let text = ascii(raw, limit: 64) {
+                if text.utf8.allSatisfy({ (48...57).contains($0) }) {
+                    guard let version = Int(text), (0...1_000_000).contains(version) else {
+                        throw APIError("invalid_identity", VL("Marstek повернув некоректну версію прошивки.", "Marstek returned an invalid firmware version."))
+                    }
+                    versions.append(version)
+                } else { unknownVersion = true }
+            } else {
                 throw APIError("invalid_identity", VL("Marstek повернув некоректну версію прошивки.", "Marstek returned an invalid firmware version."))
             }
-            device["firmware"] = version
         }
+        guard Set(versions).count <= 1 else {
+            throw APIError("invalid_identity", VL("Marstek повернув суперечливі версії прошивки.", "Marstek returned conflicting firmware versions."))
+        }
+        // An unrecognized version string is valid for read-only discovery, but
+        // cannot authorize firmware-gated settings, even alongside a numeric alias.
+        if !unknownVersion, let version = versions.first { device["firmware"] = version }
         return device
+    }
+
+    private static func sameModel(_ lhs: String, _ rhs: String) -> Bool {
+        lhs == rhs || (aNames.contains(lhs) && aNames.contains(rhs)) || (e3Names.contains(lhs) && e3Names.contains(rhs))
     }
 
     private static func response(_ data: Data, requestID: Int, method: String, source: String?) throws -> [String: Any]? {
@@ -619,6 +677,7 @@ final class VenusAPI: @unchecked Sendable {
         let check: () throws -> Void
         private var source: String?
         private var lastSend: TimeInterval?
+        private var lastMatchedResponse: TimeInterval?
         private var usedRequestIDs = Set<Int>()
 
         init(localIP: String, port: Int, broadcast: Bool = false, check: @escaping () throws -> Void) throws {
@@ -662,11 +721,11 @@ final class VenusAPI: @unchecked Sendable {
         }
 
         func send(method: String, params: [String: Any], ip: String, port: Int, willSend: (() -> Void)? = nil) throws -> Int {
-            if let lastSend {
-                while VenusAPI.now - lastSend < 1 {
-                    try check()
-                    Thread.sleep(forTimeInterval: max(0, min(0.1, 1 - (VenusAPI.now - lastSend))))
-                }
+            while true {
+                let delay = VenusAPI.sendDelay(lastSend: lastSend, lastResponse: lastMatchedResponse, now: VenusAPI.now)
+                if delay <= 0 { break }
+                try check()
+                Thread.sleep(forTimeInterval: min(0.1, delay))
             }
             try check()
             let requestID = try VenusAPI.uniqueRequestID(candidate: Int.random(in: 1...65535), excluding: usedRequestIDs)
@@ -687,6 +746,8 @@ final class VenusAPI: @unchecked Sendable {
         }
 
         struct Packet { let data: Data, ip: String; let port: Int }
+
+        func matchedResponse() { lastMatchedResponse = VenusAPI.now }
 
         func receive(until deadline: TimeInterval) throws -> Packet? {
             while VenusAPI.now < deadline {
@@ -721,16 +782,22 @@ final class VenusAPI: @unchecked Sendable {
 
         private func queryOnce(ip: String, port: Int, method: String, params: [String: Any], willSend: (() -> Void)?) throws -> ([String: Any], String) {
             let requestID = try send(method: method, params: params, ip: ip, port: port, willSend: willSend)
-            let deadline = VenusAPI.now + 2
+            let deadline = VenusAPI.now + VenusAPI.responseTimeout(method: method)
             for _ in 0..<64 {
                 guard let packet = try receive(until: deadline) else { break }
                 guard packet.ip == ip, packet.port == port else { continue }
-                if let reply = try VenusAPI.response(packet.data, requestID: requestID, method: method, source: source) {
-                    source = reply["src"] as? String
-                    return (reply, VenusAPI.timestamp())
+                do {
+                    if let reply = try VenusAPI.response(packet.data, requestID: requestID, method: method, source: source) {
+                        matchedResponse()
+                        source = reply["src"] as? String
+                        return (reply, VenusAPI.timestamp())
+                    }
+                } catch {
+                    matchedResponse()
+                    throw error
                 }
             }
-            throw APIError("timeout", VL("Marstek не відповів. Перевір Local API, порт і підключення до тієї самої LAN.", "Marstek did not respond. Check Local API, the port, and connection to the same LAN."))
+            throw APIError("timeout", VL("Станція не відповіла. Перевір порт Local API та дозвіл VenusBar на локальну мережу.", "The station did not respond. Check the Local API port and VenusBar’s local network permission."))
         }
     }
 
@@ -812,6 +879,52 @@ final class VenusAPI: @unchecked Sendable {
             if try !condition() { throw APIError("selfcheck_failed", VL("Перевірка автономного Venus API не пройшла.", "The offline Venus API self-check failed.")) }
         }
         func rejected(_ body: () throws -> Void) -> Bool { do { try body(); return false } catch { return true } }
+        try require(discoveryAttempts == 2 && discoveryWindow == 5)
+        try require(responseTimeout(method: "Marstek.GetDevice") == 5 && responseTimeout(method: "ES.GetStatus") == 2)
+        try require(sendDelay(lastSend: nil, lastResponse: nil, now: 10) == 0)
+        try require(abs(sendDelay(lastSend: 10, lastResponse: 10.8, now: 10.9) - 0.9) < 0.000001)
+        try require(abs(sendDelay(lastSend: 10.8, lastResponse: 10, now: 10.9) - 0.9) < 0.000001)
+        try require(sendDelay(lastSend: 10, lastResponse: 10.8, now: 11.8) == 0)
+        func device(_ result: [String: Any]) throws -> [String: Any] {
+            try identity(["result": result], ip: "192.168.50.42", port: 30000)
+        }
+        for model in aNames.union(e3Names) {
+            for modelKey in ["device_type", "device"] {
+                for versionKey in ["version", "ver"] {
+                    for firmware: Any in [150, "150"] {
+                        let parsed = try device([modelKey: model, versionKey: firmware])
+                        try require(parsed["name"] as? String == model && integer(parsed["firmware"]) == 150)
+                        try require(boolean(parsed["supports_pv"]) == aNames.contains(model))
+                    }
+                }
+            }
+        }
+        let aliases = try device(["device_type": "VNSE3-0", "device": "VenusE3.0", "version": "150", "ver": 150])
+        try require(aliases["name"] as? String == "VNSE3-0" && integer(aliases["firmware"]) == 150)
+        for malformed: [String: Any] in [
+            [:], ["device": true], ["device_type": "VenusA", "device": "VenusE3.0"],
+            ["device_type": "VenusA", "device": "Unsupported"],
+            ["device_type": "VenusA", "device": false],
+            ["device": "VenusA", "version": true], ["device": "VenusA", "version": ["ver": 150]],
+            ["device": "VenusA", "version": [150]], ["device": "VenusA", "version": 150.0],
+            ["device": "VenusA", "version": "1000001"], ["device": "VenusA", "version": -1],
+            ["device": "VenusA", "version": "150", "ver": 149],
+            ["device": "VenusA", "ip": "192.168.50.43"]
+        ] { try require(rejected { _ = try device(malformed) }) }
+        let systemPlan = try commandPlan(["ip": "192.168.50.42", "action": "set_led", "value": true])
+        for unknownVersion: [String: Any] in [
+            ["device": "VenusE3.0"], ["device": "VenusE3.0", "version": "v150beta"],
+            ["device": "VenusE3.0", "version": "unknown", "ver": 150],
+            ["device": "VenusE3.0", "version": NSNull()]
+        ] {
+            let parsed = try device(unknownVersion)
+            try require(parsed["firmware"] == nil)
+            try require(rejected { try authorize(systemPlan, device: parsed) })
+        }
+        try authorize(systemPlan, device: device(["device_type": "VenusE3.0", "version": "150"]))
+        let unsupported = try device(["device_type": "UnknownFutureModel", "version": "150"])
+        try require(!e3Names.contains(unsupported["name"] as! String) && !aNames.contains(unsupported["name"] as! String))
+        try require(rejected { try authorize(systemPlan, device: unsupported) })
         let exactReads = ["Marstek.GetDevice", "ES.GetStatus", "Bat.GetStatus", "ES.GetMode", "EM.GetStatus", "Wifi.GetStatus", "BLE.GetStatus", "PV.GetStatus"]
         for method in exactReads {
             try require(attemptLimit(method: method, isWrite: false) == 2)
