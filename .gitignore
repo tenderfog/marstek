@@ -1,0 +1,36 @@
+# Generated apps, archives, and compiler state.
+/build/
+/.build/
+/.swiftpm/
+*.app/
+*.zip
+*.dmg
+.DS_Store
+xcuserdata/
+*.xcuserstate
+
+# Local connection settings and user data.
+connection.json
+connections.json
+connection-*.json
+*.local.json
+*.local.plist
+/data/
+/local/
+/private/
+/user-config/
+/user-configs/
+/screenshots/
+/qa/
+*.log
+
+# Environment files and credentials must never be published.
+.env
+.env.*
+*credentials*.json
+*token*.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
