@@ -1,0 +1,44 @@
+VenusBar 0.1 — перший запуск / first launch
+
+УКРАЇНСЬКА
+
+1. Перетягни VenusBar.app у «Програми» й відкрий її.
+2. Якщо Apple не може перевірити програму: натисни «Готово», відкрий
+   «Системні параметри» → «Приватність і безпека» та обери
+   «Все одно відкрити» для VenusBar. Підтверди відкриття, лише якщо
+   довіряєш джерелу цього архіву. Якщо кнопки немає, ще раз спробуй
+   відкрити програму й повернись у параметри.
+3. VenusBar працює через значок блискавки в рядку меню.
+4. Обери мову, увімкни Local API у застосунку MARSTEK і натисни
+   «Шукати автоматично». Mac і станція мають бути в одній мережі.
+   За потреби введи IP-адресу й UDP-порт вручну.
+
+Ця тестова збірка має локальний підпис ad hoc, без Developer ID
+та нотаризації Apple. Вона не просить вимикати захист macOS.
+На реальній Venus A ще потрібне тестування. Сповіщення вимкнені,
+доки ти не ввімкнеш їх у налаштуваннях і не надаси дозвіл macOS.
+
+ENGLISH
+
+1. Move VenusBar.app to Applications and open it.
+2. If Apple cannot verify the app, choose Done. Open System Settings
+   → Privacy & Security and choose Open Anyway for VenusBar.
+   Confirm only if you trust the source of this archive. If the button
+   is missing, try opening the app again, then return to Settings.
+3. VenusBar lives behind the lightning icon in the menu bar.
+4. Choose a language, enable Local API in the MARSTEK app, then choose
+   Find automatically. Your Mac and station must share the same local
+   network. You can also enter the IP address and UDP port manually.
+
+This test build is signed ad hoc, without an Apple Developer ID or
+notarization. It does not ask you to disable macOS protection.
+Real Venus A hardware testing is still needed. Notifications stay off
+until you enable them in settings and grant macOS permission.
+
+Apple / відкриття програми / opening the app:
+https://support.apple.com/102445
+
+Неофіційний застосунок / Unofficial app: tenderfog
+Код / Source: https://github.com/tenderfog/marstek
+Зв’язок / Contact: tenderfog.site@gmail.com
+Зроблено в Україні / Made in Ukraine

@@ -20,6 +20,7 @@ struct VenusBarMain {
                 try VenusPowerSnapshot.selfCheck()
                 try VenusLocalization.selfCheck()
                 try VenusMenuTiming.selfCheck()
+                try VenusNotificationsStore.selfCheck()
                 print("VenusBar self-check: passed")
                 return
             }
@@ -191,6 +192,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
     private let store = VenusStore()
     private let outages = VenusOutagesStore()
     private let energy = VenusEnergyStore()
+    private let notifications = VenusNotificationsStore.shared
     private var statusItem: NSStatusItem!
     private var fullPanel: NSPanel?
     private var island: NSPanel?
@@ -285,6 +287,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        notifications.refreshPermission()
         DispatchQueue.main.async { [weak self] in
             guard let self, NSApp.isActive, self.fullPanel?.isVisible != true else { return }
             self.showFullPanel()
@@ -334,6 +337,10 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
         if store.isFresh, let report = store.report, let device = store.device {
             energy.record(report: report, device: device, flow: store.flowState)
         }
+        let power = VenusPowerSnapshot.make(report: store.report, model: store.model,
+                                            chargingGridSign: store.configuration?.chargingGridSign, fresh: store.isFresh)
+        notifications.evaluate(snapshot: power, isRestored: store.isRestoredReport,
+                               stationID: store.device.map { "\($0.id)|\($0.wifiMac ?? $0.bleMac ?? $0.name)" })
         guard let button = statusItem?.button else { return }
         let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: VL("Станція", "Station"))
         bolt?.isTemplate = true
@@ -457,7 +464,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
                 .onPreferenceChange(VenusPanelHeightPreferenceKey.self) { [weak self] height in
                     DispatchQueue.main.async {
                         guard let self, let panel = self.fullPanel, panel.isVisible else { return }
-                        let size = NSSize(width: 520, height: max(430, min(770, height)))
+                        let size = NSSize(width: 520, height: max(430, min(820, height)))
                         panel.setFrame(self.panelFrame(size: size, attached: false), display: true)
                     }
                 }
@@ -468,7 +475,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let panel = fullPanel else { return }
         let fitting = panel.contentView?.fittingSize ?? NSSize(width: 520, height: 610)
-        let size = NSSize(width: 520, height: max(430, min(770, fitting.height)))
+        let size = NSSize(width: 520, height: max(430, min(820, fitting.height)))
         panel.setFrame(panelFrame(size: size, attached: false), display: true)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -514,7 +521,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
 
     private func resizeFullPanelIfVisible() {
         guard let panel = fullPanel, panel.isVisible else { return }
-        let height = max(430, min(770, panel.contentView?.fittingSize.height ?? 610))
+        let height = max(430, min(820, panel.contentView?.fittingSize.height ?? 610))
         guard panel.frame.height != height else { return }
         panel.setFrame(panelFrame(size: NSSize(width: 520, height: height), attached: false), display: true)
     }

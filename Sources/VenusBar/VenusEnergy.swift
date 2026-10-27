@@ -131,11 +131,15 @@ final class VenusEnergyStore: ObservableObject {
 
     func stop() { save(force: true, wait: true) }
 
-    func series(hours: Int, chargingGridSign: Int? = nil, now: Date = Date()) -> [VenusEnergySeries] {
+    func series(hours: Int, chargingGridSign: Int? = nil, holdingLastKnown: Bool = false, now: Date = Date()) -> [VenusEnergySeries] {
         let hours = [1, 3, 5, 24].contains(hours) ? hours : 1
         let start = now.addingTimeInterval(-Double(hours) * 3600)
         func points(_ key: String) -> [VenusEnergyPoint] {
-            samples(key).filter { $0.date >= start && $0.date <= now }.map { VenusEnergyPoint(date: $0.date, value: $0.value) }
+            let actual = samples(key).map { VenusEnergyPoint(date: $0.date, value: $0.value) }
+            return Self.windowPoints(actual, start: start, end: now, holdingLastKnown: holdingLastKnown)
+        }
+        func parts(_ points: [VenusEnergyPoint]) -> [[VenusEnergyPoint]] {
+            holdingLastKnown ? (points.isEmpty ? [] : [points]) : Self.segments(points)
         }
         let grid = points("grid_power_w")
         let sign = chargingGridSign.flatMap { [-1, 1].contains($0) ? $0 : nil }
@@ -147,8 +151,8 @@ final class VenusEnergyStore: ObservableObject {
             let output = grid.map { VenusEnergyPoint(date: $0.date, value: max(0, -$0.value * Double(sign))) }
             // This is an AC-channel projection, never net battery charge/discharge.
             // Keep real zero samples around a pulse; omit only an entirely inactive opposite channel.
-            if input.contains(where: { $0.value > 0 }) || !output.contains(where: { $0.value > 0 }) {
-                result.append(VenusEnergySeries(id: "grid_input_w", title: VL("Заряд", "Charge"), segments: Self.segments(input)))
+            if input.contains(where: { $0.value > 0 }) || (!holdingLastKnown && !output.contains(where: { $0.value > 0 })) {
+                result.append(VenusEnergySeries(id: "grid_input_w", title: VL("Заряд", "Charge"), segments: parts(input)))
             }
             if output.contains(where: { $0.value > 0 }) {
                 gridOutput = output
@@ -156,8 +160,19 @@ final class VenusEnergyStore: ObservableObject {
         }
         let backup = points("offgrid_power_w").filter { $0.value >= 0 }
         let discharge = Self.dischargePoints(grid: gridOutput, backup: backup)
-        if !discharge.isEmpty { result.append(VenusEnergySeries(id: "output_w", title: VL("Розряд", "Discharge"), segments: Self.segments(discharge))) }
+        if !discharge.isEmpty { result.append(VenusEnergySeries(id: "output_w", title: VL("Розряд", "Discharge"), segments: parts(discharge))) }
         return result
+    }
+
+    // Visual carry only: retain a real predecessor and its original clock. Neither an
+    // endpoint sample nor a fresh measurement is manufactured for the display window.
+    private nonisolated static func windowPoints(_ points: [VenusEnergyPoint], start: Date, end: Date,
+                                                 holdingLastKnown: Bool) -> [VenusEnergyPoint] {
+        let actual = points.filter { $0.value.isFinite && $0.date <= end }.sorted { $0.date < $1.date }
+        let visible = actual.filter { $0.date >= start }
+        guard holdingLastKnown, visible.first?.date != start,
+              let previous = actual.last(where: { $0.date < start }) else { return visible }
+        return [previous] + visible
     }
 
     private nonisolated static func dischargePoints(grid: [VenusEnergyPoint], backup: [VenusEnergyPoint]) -> [VenusEnergyPoint] {
@@ -397,6 +412,24 @@ final class VenusEnergyStore: ObservableObject {
         try expect(store.historyCount == 1, "future report rejected")
         let split = Self.segments([.init(date: now.addingTimeInterval(-200), value: 1), .init(date: now.addingTimeInterval(-140), value: 2), .init(date: now, value: 3)])
         try expect(split.map(\.count) == [2, 1], "chart gaps")
+        let held = Self.windowPoints([.init(date: now.addingTimeInterval(-4000), value: 12),
+                                     .init(date: now.addingTimeInterval(-300), value: 20), .init(date: now.addingTimeInterval(-10), value: 30)],
+                                    start: now.addingTimeInterval(-3600), end: now, holdingLastKnown: true)
+        try expect(held.map(\.value) == [12, 20, 30] && held.last?.date == now.addingTimeInterval(-10), "visual carry retains actual clocks and does not append now")
+        let zeroStore = VenusEnergyStore(directory: directory.appendingPathComponent("zero"))
+        zeroStore.record(report: try report(at: now, grid: 0), device: device, flow: .standby, now: now)
+        try expect(zeroStore.series(hours: 1, holdingLastKnown: true, now: now).allSatisfy { $0.id != "grid_input_w" }, "zero charge channel is hidden only in visual projection")
+        try expect(zeroStore.series(hours: 1, now: now).first?.id == "grid_input_w", "raw series remains unchanged")
+        zeroStore.stop()
+        let carryStore = VenusEnergyStore(directory: directory.appendingPathComponent("carry"))
+        carryStore.record(report: try report(at: now.addingTimeInterval(-300)), device: device, flow: .charging, now: now)
+        carryStore.record(report: try report(at: now.addingTimeInterval(-10)), device: device, flow: .charging, now: now)
+        try expect(carryStore.series(hours: 1, now: now).first?.segments.count == 2
+                   && carryStore.series(hours: 1, holdingLastKnown: true, now: now).first?.segments.count == 1,
+                   "only held visualization bridges a real missing interval")
+        carryStore.stop()
+        let heldHistory = store.series(hours: 1, chargingGridSign: 1, holdingLastKnown: true, now: now)
+        try expect(heldHistory.allSatisfy { $0.segments.count <= 1 }, "held visual projection bridges gaps")
         let expired = VenusEnergyFrame(metrics: ["grid_power_w": .init(value: 1, date: now.addingTimeInterval(-48 * 3600 - 1))])
         try expect(Self.pruned([expired], now: now).isEmpty, "48 hour pruning")
         let futureSample = VenusEnergyFrame(metrics: ["grid_power_w": .init(value: 1, date: now.addingTimeInterval(1))])

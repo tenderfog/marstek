@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 struct VenusPanel: View {
     @ObservedObject private var localization = VenusLocalization.shared
+    @ObservedObject private var notifications = VenusNotificationsStore.shared
     @ObservedObject var store: VenusStore
     @ObservedObject var outages: VenusOutagesStore
     @ObservedObject var energy: VenusEnergyStore
@@ -18,7 +19,7 @@ struct VenusPanel: View {
     @AppStorage("VenusBar.outageWelcomePending") private var addressSetupPending = false
     @State private var outageReturnPage = Page.settings
     @AppStorage("VenusBar.outageWelcomeCompleted") private var addressWelcomeCompleted = false
-    private enum Page { case overview, settings, stationSettings, outageSettings, otherSettings, controls, help, about }
+    private enum Page { case overview, settings, stationSettings, outageSettings, notificationsSettings, otherSettings, controls, help, about }
 
     var body: some View {
         Group {
@@ -31,6 +32,7 @@ struct VenusPanel: View {
                 case .settings: settings
                 case .stationSettings: stationSettings
                 case .outageSettings: VenusOutagesSettings(store: outages) { page = outageReturnPage }
+                case .notificationsSettings: notificationSettings
                 case .otherSettings: otherSettings
                 case .controls: VenusControls(store: store) { page = controlsReturnPage }
                 case .help: VenusHelp { page = helpReturnPage }
@@ -53,7 +55,7 @@ struct VenusPanel: View {
 
     private var designHeight: CGFloat {
         guard store.configuration != nil, !addressSetupPending else { return 430 }
-        if page == .overview { return outages.selection == nil ? 640 : 770 }
+        if page == .overview { return outages.selection == nil ? 690 : 820 }
         return 610
     }
 
@@ -293,6 +295,7 @@ struct VenusPanel: View {
             settingsRow(VL("Керування станцією", "Station controls"), subtitle: VL("Режими, заряджання та ліміти", "Modes, charging and limits"), symbol: "slider.horizontal.3") { openControls(from: .settings) }
             settingsRow(VL("Мережа", "Network"), subtitle: VL("Пошук станції, IP та Local API", "Station discovery, IP and Local API"), symbol: "wifi", action: openStationSettings)
             settingsRow(VL("Графіки відключень", "Outage schedules"), subtitle: VL("Область, оператор та твоя група", "Region, operator and your group"), symbol: "bolt.slash") { openOutages(from: .settings) }
+            settingsRow(VL("Сповіщення", "Notifications"), subtitle: VL("Події станції та високе навантаження", "Station events and high load"), symbol: "bell") { page = .notificationsSettings }
             settingsRow(VL("Інші параметри", "Other settings"), subtitle: VL("Оновлення, автозапуск і довідка", "Updates, launch at login and help"), symbol: "slider.horizontal.3") { page = .otherSettings }
             settingsRow(VL("Про застосунок", "About the app"), subtitle: VL("Версія, розробник і контакти", "Version, developer and contacts"), symbol: "info.circle") { page = .about }
         }
@@ -363,10 +366,12 @@ struct VenusPanel: View {
             }
             Spacer(minLength: 12)
             VStack(spacing: 13) {
-                Image(systemName: "bolt.fill").font(.system(size: 44, weight: .light))
-                    .foregroundStyle(.white.opacity(0.9)).accessibilityHidden(true)
+                if let icon = NSApp.applicationIconImage {
+                    Image(nsImage: icon).resizable().interpolation(.high)
+                        .frame(width: 64, height: 64).accessibilityHidden(true)
+                }
                 Text("VenusBar").font(.system(size: 26, weight: .semibold, design: .rounded))
-                Text(VL("Версія", "Version") + " " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"))
+                Text(versionLabel)
                     .font(.system(size: 13)).foregroundStyle(.white.opacity(0.5))
                 Text(VL("Розробник · tenderfog", "Developer · tenderfog")).font(.system(size: 14)).foregroundStyle(.white.opacity(0.75))
                 Text(VL("Зроблено в Україні", "Made in Ukraine")).font(.system(size: 14, weight: .medium)).padding(.top, 3)
@@ -384,6 +389,70 @@ struct VenusPanel: View {
             Spacer(minLength: 12)
         }.padding(22)
     }
+
+    private var versionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "2"
+        return VL("Версія \(version) · збірка \(build)", "Version \(version) · build \(build)")
+    }
+
+    private var notificationSettings: some View {
+        settingsPage(VL("Сповіщення", "Notifications"), back: .settings) {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(VL("Дозволити сповіщення", "Enable notifications"), isOn: Binding(
+                    get: { notifications.masterEnabled },
+                    set: { notifications.setMasterEnabled($0) }))
+                    .font(.system(size: 15, weight: .medium)).toggleStyle(.switch)
+                    .frame(minHeight: 44).disabled(notifications.isRequestingPermission)
+                Text(VL("Локальні сповіщення VenusBar на цьому Mac. Дозвіл macOS запитується після ввімкнення.", "Local VenusBar notifications on this Mac. macOS asks for permission when you turn them on."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(notifications.isRequestingPermission ? VL("Очікуємо дозволу macOS…", "Waiting for macOS permission…") : notifications.permissionStatus)
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                if notifications.permissionDenied {
+                    Button(action: notifications.openSystemSettings) {
+                        Label(VL("Відкрити налаштування macOS", "Open macOS Settings"), systemImage: "arrow.up.right")
+                    }.buttonStyle(VenusButtonStyle())
+                }
+            }
+            rule
+            VStack(alignment: .leading, spacing: 14) {
+                Toggle(VL("Високе навантаження", "High load"), isOn: Binding(
+                    get: { notifications.highLoadEnabled },
+                    set: { notifications.setHighLoadEnabled($0) }))
+                    .font(.system(size: 15, weight: .medium)).toggleStyle(.switch)
+                    .frame(minHeight: 44).disabled(!notifications.masterEnabled)
+                Text(VL("Попередження, коли вихідна потужність станції перевищує обраний поріг. Наприклад, після ввімкнення потужного приладу; VenusBar не визначає, який саме прилад працює.", "An alert when the station’s output power exceeds your threshold, for example after a high-power appliance turns on. VenusBar does not identify the appliance."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(VL("Поріг сповіщення", "Alert threshold")).font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                        Spacer(minLength: 8)
+                        Text(VL("\(VenusVisuals.number(notifications.thresholdW, digits: 0)) Вт", "\(VenusVisuals.number(notifications.thresholdW, digits: 0)) W"))
+                            .font(.system(size: 27, weight: .medium, design: .rounded)).monospacedDigit()
+                    }
+                    Slider(value: Binding(get: { notifications.thresholdW }, set: { notifications.setThresholdWatts($0) }),
+                           in: 100...notificationThresholdMaximum, step: 50)
+                        .tint(.white.opacity(0.8))
+                        .accessibilityLabel(VL("Поріг високого навантаження у ватах", "High load threshold in watts"))
+                        .accessibilityValue(VL("\(Int(notifications.thresholdW)) ват", "\(Int(notifications.thresholdW)) watts"))
+                    HStack {
+                        Text(VL("100 Вт", "100 W"))
+                        Spacer()
+                        Text(VL("\(Int(notificationThresholdMaximum)) Вт", "\(Int(notificationThresholdMaximum)) W"))
+                    }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.4)).monospacedDigit()
+                }.disabled(!notifications.masterEnabled || !notifications.highLoadEnabled)
+                    .opacity(notifications.masterEnabled && notifications.highLoadEnabled ? 1 : 0.45)
+                Text(VL("Це лише поріг сповіщення. Він не змінює ліміти, режим або захист станції.", "This is only an alert threshold. It does not change the station’s limits, mode or protection."))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var notificationThresholdMaximum: Double { store.model == .venusE ? 2500 : 5000 }
 
     private var otherSettings: some View {
         settingsPage(VL("Інші параметри", "Other settings"), back: .settings) {

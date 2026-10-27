@@ -55,6 +55,8 @@ mkdir -p "$stage_path/sources" "$stage_app/Contents/MacOS" "$stage_app/Contents/
 # Freeze one source revision for both architecture slices.
 cp "$source_root"/*.swift "$stage_path/sources/"
 cp "$project_root/THIRD_PARTY_NOTICES.md" "$stage_app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+cp "$project_root/Assets/AppIcon/VenusBar.icns" "$stage_app/Contents/Resources/VenusBar.icns"
+cp "$project_root/Assets/AppIcon/SOURCE.md" "$stage_app/Contents/Resources/MARSTEK_ICON_SOURCE.md"
 
 if swift --version 2>/dev/null | /usr/bin/grep -q 'Swift version 6.0' && [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk ]]; then
     export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk"
@@ -132,9 +134,10 @@ cat > "$stage_app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key><string>local.offline.VenusBar</string>
     <key>CFBundleName</key><string>VenusBar</string>
     <key>CFBundleDisplayName</key><string>VenusBar</string>
+    <key>CFBundleIconFile</key><string>VenusBar.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleVersion</key><string>2</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
@@ -148,7 +151,10 @@ PLIST
 /usr/bin/codesign --force --sign - --options runtime --timestamp=none "$stage_app"
 /usr/bin/codesign --verify --strict --verbose=2 "$stage_app"
 "$stage_app/Contents/MacOS/VenusBar" --self-check
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$stage_app" "$stage_path/VenusBar.zip"
+mkdir -p "$stage_path/share"
+/usr/bin/ditto "$stage_app" "$stage_path/share/VenusBar.app"
+cp "$project_root/docs/FIRST-RUN.txt" "$stage_path/share/FIRST-RUN.txt"
+/usr/bin/ditto -c -k --sequesterRsrc "$stage_path/share" "$stage_path/VenusBar.zip"
 
 # Only generated VenusBar artifacts are replaced, after compile/sign/check pass.
 [[ ! -e "$app_path" ]] || had_previous_app=true

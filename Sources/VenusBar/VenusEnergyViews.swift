@@ -11,8 +11,8 @@ struct VenusEnergyHistoryView: View {
     var body: some View {
         let now = Date()
         let start = now.addingTimeInterval(-Double(hours) * 3600)
-        let series = store.series(hours: hours, chargingGridSign: chargingGridSign, now: now)
-        return VStack(spacing: 2) {
+        let series = store.series(hours: hours, chargingGridSign: chargingGridSign, holdingLastKnown: true, now: now)
+        return VStack(spacing: 6) {
             HStack(spacing: 6) {
                 Text(VL("Історія потужності", "Power history")).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 4)
@@ -30,27 +30,77 @@ struct VenusEnergyHistoryView: View {
             if series.isEmpty {
                 Text(VL("Історія з’явиться під час роботи", "History will appear as the station runs"))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.35))
-                    .frame(maxWidth: .infinity).frame(height: compact ? 60 : 72)
+                    .frame(maxWidth: .infinity).frame(height: plotHeight + 14)
             } else {
-                VenusEnergySparkline(series: series, start: start, end: now)
-                    .frame(height: compact ? 60 : 72).transaction { $0.animation = nil }
+                historyPlot(series, start: start, end: now)
             }
-            timeAxis(start: start, end: now)
             legend(series)
         }
-        .padding(.horizontal, 10).padding(.vertical, 6).frame(height: compact ? 128 : 140)
-        .help(VL("Фактичні показники станції за останні \(hours) год. Пропуски понад 90 секунд розривають лінію. Мережевий канал — обмін через AC станції, не чиста потужність батареї й не споживання всього дому.", "Actual station readings over the last \(hours) hours. Gaps over 90 seconds break the line. The grid channel is AC exchange at the station, not net battery power or whole-home usage."))
+        .padding(.horizontal, 10).padding(.vertical, 6).frame(height: compact ? 174 : 186)
+        .help(VL("Між відповідями лінія утримує останнє відоме значення, зокрема до правого краю графіка. Це не нові виміри. Час останнього показу наведено внизу. Довгі періоди можна прокручувати горизонтально.", "Between responses, the line holds the last known value, including to the chart’s right edge. These are not new measurements. The last reading time is shown below. Scroll longer periods horizontally."))
+    }
+
+    private var plotHeight: CGFloat { compact ? 92 : 104 }
+    private var widthMultiplier: CGFloat { [1: 1, 3: 1.75, 5: 2.5, 24: 6][hours] ?? 1 }
+
+    private func historyPlot(_ series: [VenusEnergySeries], start: Date, end: Date) -> some View {
+        GeometryReader { geometry in
+            HStack(alignment: .top, spacing: 0) {
+                valueAxis(series).frame(width: 45, height: plotHeight)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        let width = max(1, geometry.size.width - 45) * widthMultiplier
+                        VStack(spacing: 0) {
+                            VenusEnergySparkline(series: series, start: start, end: end)
+                                .frame(width: width, height: plotHeight).transaction { $0.animation = nil }
+                            timeAxis(start: start, end: end).frame(width: width, height: 14)
+                        }.overlay(alignment: .trailing) { Color.clear.frame(width: 1).id("history-end") }
+                    }.scrollIndicators(.hidden)
+                        .onAppear { proxy.scrollTo("history-end", anchor: .trailing) }
+                        .onChange(of: hours) { _ in
+                            DispatchQueue.main.async { proxy.scrollTo("history-end", anchor: .trailing) }
+                        }
+                }
+            }
+        }.frame(height: plotHeight + 14)
+    }
+
+    private func valueAxis(_ series: [VenusEnergySeries]) -> some View {
+        let values = series.flatMap(\.segments).flatMap { $0 }.map(\.value).filter(\.isFinite)
+        let maximum = max(0, values.max() ?? 0)
+        return VStack(alignment: .leading, spacing: 0) {
+            if maximum > 0 { Text(VenusVisuals.power(maximum)) }
+            Spacer(minLength: 0)
+            Text(VenusVisuals.power(0))
+        }.font(.system(size: 10)).monospacedDigit().foregroundStyle(.white.opacity(0.4)).padding(.vertical, 4)
     }
 
     private func timeAxis(start: Date, end: Date) -> some View {
-        HStack {
-            Text(clock(start))
-            Spacer()
-            Text(clock(start.addingTimeInterval(end.timeIntervalSince(start) / 2)))
-            Spacer()
-            Text(VL("Зараз \(clock(end))", "Now \(clock(end))"))
-        }.font(.system(size: 10)).monospacedDigit().foregroundStyle(.white.opacity(0.35))
-            .padding(.leading, 43).frame(height: 10)
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                HStack {
+                    Text(clock(start)); Spacer()
+                    Text(VL("Зараз \(clock(end))", "Now \(clock(end))"))
+                }
+                ForEach(axisDates(start: start, end: end), id: \.self) { date in
+                    let x = geometry.size.width * date.timeIntervalSince(start) / end.timeIntervalSince(start)
+                    if x > 48, x < geometry.size.width - 90 {
+                        Text(clock(date)).position(x: x, y: 7)
+                    }
+                }
+            }
+        }.font(.system(size: 10)).monospacedDigit().foregroundStyle(.white.opacity(0.4))
+    }
+
+    private func axisDates(start: Date, end: Date) -> [Date] {
+        let interval: TimeInterval = hours == 1 ? 15 * 60 : 3600
+        var date = Calendar.current.dateInterval(of: .hour, for: start)?.start ?? start
+        var dates: [Date] = []
+        while date < end {
+            if date > start { dates.append(date) }
+            date = date.addingTimeInterval(interval)
+        }
+        return dates
     }
 
     private func clock(_ date: Date) -> String {
@@ -62,7 +112,7 @@ struct VenusEnergyHistoryView: View {
 
     private func legend(_ series: [VenusEnergySeries]) -> some View {
         HStack(spacing: 10) {
-            ForEach(Array(series.enumerated()), id: \.element.id) { index, item in
+            ForEach(series.filter { $0.segments.flatMap({ $0 }).contains(where: { $0.value != 0 }) }) { item in
                 HStack(spacing: 4) {
                     Circle().fill(VenusEnergySparkline.color(item.id)).frame(width: 4, height: 4)
                     Text(seriesTitle(item.id)).lineLimit(1).minimumScaleFactor(0.85)
@@ -70,12 +120,12 @@ struct VenusEnergyHistoryView: View {
                 }
             }
             Spacer(minLength: 4)
-            Text(currentOutputLabel).monospacedDigit().lineLimit(1).fixedSize()
-                .foregroundStyle(.white.opacity(0.65)).help(VL("Навантаження резервного виходу за останньою відповіддю. Діапазон історії: \(rangeLabel(series)).", "Backup output load from the latest response. History range: \(rangeLabel(series))."))
+            Text(lastReadingLabel(series)).monospacedDigit().lineLimit(1).fixedSize()
+                .foregroundStyle(.white.opacity(0.65)).help(VL("Останнє фактично отримане значення на графіку. Після нього лінія продовжується без нового виміру. Діапазон історії: \(rangeLabel(series)).", "The last value actually received in this chart. After it, the line continues without a new measurement. History range: \(rangeLabel(series))."))
             if let error = store.persistenceError {
                 Image(systemName: "exclamationmark.circle").help(error).accessibilityLabel(error)
             }
-        }.font(.system(size: 10)).foregroundStyle(.white.opacity(0.6)).frame(height: 12)
+        }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).frame(height: 16)
     }
 
     private func seriesTitle(_ id: String) -> String {
@@ -87,10 +137,17 @@ struct VenusEnergyHistoryView: View {
         }
     }
 
-    private var currentOutputLabel: String {
-        guard let report = store.latestReport, report.fresh("offgrid_power_w"),
-              let watts = report.offgridPowerW, watts >= 0 else { return VL("Останні покази", "Last readings") }
-        return VL("Зараз \(VenusVisuals.power(watts))", "Now \(VenusVisuals.power(watts))")
+    private func lastReadingLabel(_ series: [VenusEnergySeries]) -> String {
+        let latest = series.compactMap { item -> (id: String, point: VenusEnergyPoint)? in
+            item.segments.flatMap({ $0 }).max(by: { $0.date < $1.date }).map { (item.id, $0) }
+        }
+        let active = latest.filter { $0.point.value > 0 }
+        let selected = active.first(where: { $0.id == "output_w" }) ?? active.max(by: { $0.point.date < $1.point.date })
+            ?? latest.max(by: { $0.point.date < $1.point.date })
+        guard let last = selected?.point else {
+            return VL("Ще немає показів", "No readings yet")
+        }
+        return VL("Останній показ \(VenusVisuals.power(last.value)) · \(clock(last.date))", "Last reading \(VenusVisuals.power(last.value)) · \(clock(last.date))")
     }
 
     private func rangeLabel(_ series: [VenusEnergySeries]) -> String {
@@ -118,7 +175,7 @@ private struct VenusEnergySparkline: View {
             let high = upper + padding
             let span = max(high - low, 1)
             let duration = end.timeIntervalSince(start)
-            let plot = CGRect(x: 43, y: 4, width: max(1, size.width - 43), height: max(1, size.height - 8))
+            let plot = CGRect(x: 0, y: 4, width: max(1, size.width), height: max(1, size.height - 8))
             func position(_ point: VenusEnergyPoint) -> CGPoint {
                 let x = point.date.timeIntervalSince(start) / duration
                 let y = (point.value - low) / span
@@ -128,46 +185,44 @@ private struct VenusEnergySparkline: View {
             var baseline = Path()
             baseline.move(to: CGPoint(x: plot.minX, y: zeroY)); baseline.addLine(to: CGPoint(x: plot.maxX, y: zeroY))
             context.stroke(baseline, with: .color(.white.opacity(0.14)), style: StrokeStyle(lineWidth: 0.6, dash: [2, 4]))
-            if upper > 0 {
-                context.draw(Text(VenusVisuals.power(upper)).font(.system(size: 10)).foregroundColor(.white.opacity(0.4)),
-                             at: CGPoint(x: 0, y: 0), anchor: .topLeading)
-            }
-            context.draw(Text(VenusVisuals.power(0)).font(.system(size: 10)).foregroundColor(.white.opacity(0.35)),
-                         at: CGPoint(x: 0, y: min(size.height - 10, max(0, zeroY - 5))), anchor: .topLeading)
-            if lower < 0 {
-                context.draw(Text(VenusVisuals.power(lower)).font(.system(size: 10)).foregroundColor(.white.opacity(0.35)),
-                             at: CGPoint(x: 0, y: size.height), anchor: .bottomLeading)
-            }
             for item in series {
                 for segment in item.segments {
-                    let points = segment.filter { $0.value.isFinite && $0.date >= start && $0.date <= end }
+                    let points = segment.filter { $0.value.isFinite && $0.date <= end }
                     guard let first = points.first else { continue }
                     var line = Path(); line.move(to: position(first))
                     var previous = first
                     for point in points.dropFirst() {
-                        // Keep the visual gap rule even if a future data source forgets to segment.
-                        if point.date.timeIntervalSince(previous.date) > 90 { line.move(to: position(point)) }
-                        else {
-                            let a = position(previous), b = position(point)
-                            let area = CGRect(x: a.x, y: min(a.y, zeroY), width: max(0, b.x - a.x), height: abs(zeroY - a.y))
-                            if area.width > 0, area.height > 0 {
-                                context.fill(Path(area), with: .color(Self.color(item.id).opacity(0.075)))
-                            }
-                            line.addLine(to: CGPoint(x: position(point).x, y: position(previous).y))
-                            line.addLine(to: position(point))
+                        // Display-only sample-and-hold: an interval without a reply keeps
+                        // the previous value, without adding a measurement to history.
+                        let a = position(previous), b = position(point)
+                        let area = CGRect(x: a.x, y: min(a.y, zeroY), width: max(0, b.x - a.x), height: abs(zeroY - a.y))
+                        if area.width > 0, area.height > 0 {
+                            context.fill(Path(area), with: .color(Self.color(item.id).opacity(0.075)))
                         }
+                        if previous.value == 0 { line.move(to: CGPoint(x: b.x, y: a.y)) }
+                        else { line.addLine(to: CGPoint(x: b.x, y: a.y)) }
+                        if previous.value != 0 || point.value != 0 { line.addLine(to: b) }
+                        else { line.move(to: b) }
                         previous = point
                     }
                     context.stroke(line, with: .color(Self.color(item.id)), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .miter))
-                    if points.count == 1 {
-                        let point = position(first)
-                        context.fill(Path(ellipseIn: CGRect(x: point.x - 1.5, y: point.y - 1.5, width: 3, height: 3)), with: .color(Self.color(item.id)))
+                    if let last = points.last {
+                        let point = position(last)
+                        if last.value != 0, point.x < plot.maxX {
+                            var held = Path(); held.move(to: point)
+                            held.addLine(to: CGPoint(x: plot.maxX, y: point.y))
+                            context.stroke(held, with: .color(Self.color(item.id).opacity(0.5)), lineWidth: 1.4)
+                        }
+                        if last.date >= start {
+                            let color = last.value == 0 ? Color.white.opacity(0.35) : Self.color(item.id)
+                            context.fill(Path(ellipseIn: CGRect(x: point.x - 2, y: point.y - 2, width: 4, height: 4)), with: .color(color))
+                        }
                     }
                 }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(VL("Графік потужності станції у ватах. Розриви означають відсутні показники.", "Station power history in watts. Gaps indicate missing readings."))
+        .accessibilityLabel(VL("Графік потужності у ватах. Між відповідями й до поточного часу утримується останнє відоме значення; це не нові виміри.", "Power history in watts. Between responses and up to the current time, the last known value is held; these are not new measurements."))
     }
 
     static func color(_ id: String) -> Color {

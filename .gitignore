@@ -22,6 +22,7 @@ connection-*.json
 /user-configs/
 /screenshots/
 /qa/
+/design-qa.md
 *.log
 
 # Environment files and credentials must never be published.

@@ -106,33 +106,46 @@ struct VenusTodayOutageCard: View {
     @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject var store: VenusOutagesStore
     let onOpen: () -> Void
+    @State private var hovered = false
 
     var body: some View {
         if store.selection != nil {
             TimelineView(.periodic(from: .now, by: 30)) { context in
-                Button(action: onOpen) { content(at: context.date) }
-                    .buttonStyle(.plain)
-                    .padding(12)
+                Button(action: onOpen) {
+                    content(at: context.date)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, minHeight: 124, maxHeight: 124, alignment: .leading)
+                        .background {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(LinearGradient(colors: [cardAccent.opacity(0.13), cardAccent.opacity(0.025), .clear],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                        }
+                        .modifier(SwiftfulUICardSurface(backgroundColor: .black.opacity(hovered ? 0.12 : 0.18),
+                                                       borderColor: .clear, borderWidth: 0, cornerRadius: 18))
+                }
+                    .buttonStyle(VenusOutageCardButtonStyle())
                     .frame(maxWidth: .infinity, minHeight: 124, maxHeight: 124, alignment: .leading)
-                    .background(cardColor, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: 19))
+                    .contentShape(RoundedRectangle(cornerRadius: 18))
+                    .onHover { hovered = $0 }
                     .help(VL("План оператора за київським часом. Натисни, щоб відкрити повний графік.", "The operator’s plan in Kyiv time. Click to open the full schedule."))
             }
         }
     }
 
     private func content(at now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(headline(at: now)).font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.85)
+                    Text(headline(at: now)).font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.95)).lineLimit(1).minimumScaleFactor(0.85)
                     Spacer(minLength: 2)
-                    Text(VL("За графіком", "Scheduled")).font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.65)).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(VL("За графіком", "Scheduled"))
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                    }.font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 }
-                Text(store.selection?.addressLabel ?? "").font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.tail)
+                Text(store.selection?.addressLabel ?? "").font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.5)).lineLimit(1).truncationMode(.tail)
             }
             intervals(at: now)
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -148,19 +161,22 @@ struct VenusTodayOutageCard: View {
                     let state = displayState(interval.state)
                     let minute = VenusOutagesReport.minute(at: now)
                     let current = interval.start <= minute && minute < interval.end
-                    VStack(spacing: 5) {
-                        Capsule().fill(state == .noOutagePlanned ? Color.white : pillNavy)
-                            .overlay {
-                                Image(systemName: state == .noOutagePlanned ? "bolt.fill" : VenusOutageStyle.symbol(state))
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(state == .noOutagePlanned ? supplyGreen : Color.white.opacity(0.9))
-                            }
-                            .overlay { Capsule().stroke(.white.opacity(current ? 0.95 : 0), lineWidth: 1.2) }
-                            .frame(height: 22)
-                        Text(interval.timeRange).font(.system(size: 12, weight: current ? .semibold : .regular))
-                            .monospacedDigit().foregroundStyle(.white.opacity(current ? 1 : 0.75))
-                            .lineLimit(1).minimumScaleFactor(0.85)
-                    }.frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 6) {
+                            Image(systemName: state == .noOutagePlanned ? "bolt.fill" : VenusOutageStyle.symbol(state))
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(VenusOutageStyle.color(state))
+                            Text(interval.timeRange).font(.system(size: 12, weight: .medium)).monospacedDigit()
+                                .foregroundStyle(.white.opacity(current ? 0.95 : 0.7))
+                                .lineLimit(1).minimumScaleFactor(0.85)
+                        }
+                        HStack(spacing: 5) {
+                            if current { Circle().fill(cardAccent).frame(width: 3, height: 3) }
+                            Text(current ? VL("Зараз", "Now") : intervalLabel(state))
+                                .font(.system(size: 10)).foregroundStyle(.white.opacity(current ? 0.65 : 0.5))
+                        }
+                    }.padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .modifier(SwiftfulUICardSurface(backgroundColor: .white.opacity(current ? 0.065 : 0.025),
+                                                       borderColor: .clear, borderWidth: 0, cornerRadius: 11))
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("\(current ? VL("Зараз. ", "Now. ") : "")\(interval.timeRange). \(state.label)")
                 }
@@ -171,9 +187,15 @@ struct VenusTodayOutageCard: View {
         }
     }
 
-    private let supplyGreen = Color(red: 0.12, green: 0.43, blue: 0.28)
-    private let pillNavy = Color(red: 0.08, green: 0.14, blue: 0.26)
-    private var cardColor: Color { store.currentPlanState == .noOutagePlanned ? supplyGreen : Color(red: 0.04, green: 0.085, blue: 0.18) }
+    private var cardAccent: Color { VenusOutageStyle.color(store.currentPlanState) }
+
+    private func intervalLabel(_ state: VenusOutagePlanState) -> String {
+        switch state {
+        case .noOutagePlanned: return VL("Світло є", "Power on")
+        case .outagePlanned: return VL("Без світла", "Power off")
+        case .unknown, .stale, .emergency: return state.label
+        }
+    }
 
     private func headline(at now: Date) -> String {
         let minute = VenusOutagesReport.minute(at: now)
@@ -190,6 +212,12 @@ struct VenusTodayOutageCard: View {
         case .stale, .emergency, .unknown: return store.currentPlanState
         case .noOutagePlanned, .outagePlanned: return state
         }
+    }
+}
+
+private struct VenusOutageCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.modifier(SwiftfulUIPressFeedback(isPressed: configuration.isPressed, scale: 0.995, opacity: 0.88))
     }
 }
 
