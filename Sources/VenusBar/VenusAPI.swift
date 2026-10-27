@@ -27,7 +27,7 @@ final class VenusAPI: @unchecked Sendable {
             let (reply, identifiedAt) = try wire.query(ip: ip, port: port, method: "Marstek.GetDevice", params: ["ble_mac": "0"])
             let device = try Self.identity(reply, ip: ip, port: port)
             guard let model = device["name"] as? String, Self.e3Names.contains(model) || Self.aNames.contains(model) else {
-                throw APIError("unsupported_device", "Підтримуються Venus E3 та Venus A з локальним Open API.")
+                throw APIError("unsupported_device", VL("Підтримуються Venus E3 та Venus A з локальним Open API.", "Venus E3 and Venus A with local Open API are supported."))
             }
             var methods = ["ES.GetStatus", "Bat.GetStatus", "ES.GetMode"]
             if device["supports_pv"] as? Bool == true { methods.append("PV.GetStatus") }
@@ -50,7 +50,7 @@ final class VenusAPI: @unchecked Sendable {
             var normalized = Self.normalize(samples)
             errors.append(contentsOf: normalized.errors)
             guard !normalized.values.isEmpty else {
-                throw APIError("no_data", "Marstek не повернув підтримуваних показників батареї чи потужності.")
+                throw APIError("no_data", VL("Marstek не повернув підтримуваних показників батареї чи потужності.", "Marstek returned no supported battery or power readings."))
             }
             normalized.values["schema_version"] = 1
             normalized.values["observed_at"] = normalized.clocks.values.min()!
@@ -100,7 +100,7 @@ final class VenusAPI: @unchecked Sendable {
                 catch { errors.append(Self.failureItem(error, method: "Marstek.GetDevice")) }
             }
             if devices.isEmpty, errors.count == interfaces.count, let first = errors.first {
-                throw APIError(first["code"] as? String ?? "network_unavailable", first["message"] as? String ?? "Пошук Marstek недоступний.")
+                throw APIError(first["code"] as? String ?? "network_unavailable", first["message"] as? String ?? VL("Пошук Marstek недоступний.", "Marstek discovery is unavailable."))
             }
             return ["ok": true, "status": "discovered", "devices": devices.keys.sorted().compactMap { devices[$0] }, "errors": errors]
         }
@@ -119,7 +119,7 @@ final class VenusAPI: @unchecked Sendable {
             let (ack, _) = try wire.query(ip: plan.ip, port: plan.port, method: plan.method, params: plan.params,
                                          willSend: { sent = true })
             guard let acknowledgement = ack["result"] as? [String: Any], Self.boolean(acknowledgement["set_result"]) == true else {
-                throw APIError("not_accepted", "Marstek не підтвердив прийняття команди.")
+                throw APIError("not_accepted", VL("Marstek не підтвердив прийняття команди.", "Marstek did not confirm command acceptance."))
             }
             var result: [String: Any] = ["ok": true, "status": "accepted", "accepted": true,
                                          "verified": false, "method": plan.method, "device": device]
@@ -134,14 +134,14 @@ final class VenusAPI: @unchecked Sendable {
                         result["verified"] = plan.action == "set_mode" && mode == requested
                     }
                     if result["verified"] as? Bool != true {
-                        warnings.append(["code": "state_unconfirmed", "message": plan.action == "set_mode" ? "Команду прийнято, але новий режим ще не підтверджено читанням." : "API читає режим, але не підтверджує записані параметри Passive або розкладу."])
+                        warnings.append(["code": "state_unconfirmed", "message": plan.action == "set_mode" ? VL("Команду прийнято, але новий режим ще не підтверджено читанням.", "Command accepted, but a readback has not confirmed the new mode.") : VL("API читає режим, але не підтверджує записані параметри Passive або розкладу.", "The API reads the mode but does not confirm written Passive or schedule parameters.")])
                     }
                 } catch is CancellationError { throw CancellationError() }
                 catch {
-                    warnings.append(["code": "readback_unavailable", "message": "Команду прийнято; повторне читання режиму недоступне."])
+                    warnings.append(["code": "readback_unavailable", "message": VL("Команду прийнято; повторне читання режиму недоступне.", "Command accepted; mode readback is unavailable.")])
                 }
             } else {
-                warnings.append(["code": "no_documented_readback", "message": "Команду прийнято API; документованого читання цього налаштування немає."])
+                warnings.append(["code": "no_documented_readback", "message": VL("Команду прийнято API; документованого читання цього налаштування немає.", "Command accepted by the API; no readback is documented for this setting.")])
             }
             result["warnings"] = warnings
             return result
@@ -163,7 +163,7 @@ final class VenusAPI: @unchecked Sendable {
     private func operation(commandSent: (() -> Bool)? = nil, _ body: (UInt64) throws -> [String: Any]) throws -> Data {
         lock.lock()
         guard !cancelled else { lock.unlock(); throw CancellationError() }
-        guard !busy else { lock.unlock(); throw APIError("busy", "Попередній запит Marstek ще завершується.") }
+        guard !busy else { lock.unlock(); throw APIError("busy", VL("Попередній запит Marstek ще завершується.", "The previous Marstek request is still finishing.")) }
         busy = true
         let token = generation
         lock.unlock()
@@ -179,7 +179,7 @@ final class VenusAPI: @unchecked Sendable {
             var failure: [String: Any] = ["ok": false, "status": sent ? "unconfirmed" : "error", "error": item]
             if commandSent != nil {
                 failure["accepted"] = false; failure["verified"] = false; failure["command_sent"] = sent
-                if sent { failure["error"] = ["code": item["code"]!, "message": "Команду надіслано, але результат не підтверджено. Перевір стан перед повторенням."] }
+                if sent { failure["error"] = ["code": item["code"]!, "message": VL("Команду надіслано, але результат не підтверджено. Перевір стан перед повторенням.", "Command sent, but its result is unconfirmed. Check the station before retrying.")] }
             } else { failure["errors"] = [] as [String] }
             return try JSONSerialization.data(withJSONObject: failure, options: [.sortedKeys])
         }
@@ -188,7 +188,7 @@ final class VenusAPI: @unchecked Sendable {
     private static func failureItem(_ error: Error, method: String? = nil) -> [String: Any] {
         let known = error as? APIError
         var result: [String: Any] = ["code": known?.code ?? "network_unavailable",
-                                     "message": known?.message ?? "Не вдалося виконати локальний запит Marstek."]
+                                     "message": known?.message ?? VL("Не вдалося виконати локальний запит Marstek.", "Could not complete the local Marstek request.")]
         if let method { result["method"] = method }
         return result
     }
@@ -214,12 +214,12 @@ final class VenusAPI: @unchecked Sendable {
                 guard error.code == "timeout", index + 1 < limit else { throw error }
             }
         }
-        throw APIError("timeout", "Marstek не відповів за відведений час.")
+        throw APIError("timeout", VL("Marstek не відповів за відведений час.", "Marstek did not respond within the time limit."))
     }
 
     private static func uniqueRequestID(candidate: Int, excluding used: Set<Int>) throws -> Int {
         guard (1...65535).contains(candidate), used.count < 65535 else {
-            throw APIError("request_id_unavailable", "Неможливо створити унікальний ідентифікатор запиту.")
+            throw APIError("request_id_unavailable", VL("Неможливо створити унікальний ідентифікатор запиту.", "Could not create a unique request identifier."))
         }
         var result = candidate
         while used.contains(result) { result = result == 65535 ? 1 : result + 1 }
@@ -290,13 +290,13 @@ final class VenusAPI: @unchecked Sendable {
     }
 
     private static func validatePort(_ port: Int) throws {
-        guard (1024...65535).contains(port) else { throw APIError("invalid_configuration", "UDP-порт має бути цілим числом від 1024 до 65535.") }
+        guard (1024...65535).contains(port) else { throw APIError("invalid_configuration", VL("UDP-порт має бути цілим числом від 1024 до 65535.", "UDP port must be an integer from 1024 to 65535.")) }
     }
 
     private static func validate(ip: String, port: Int) throws {
         try validatePort(port)
         guard let address = ipv4(ip), privateAddress(address) else {
-            throw APIError("invalid_configuration", "Потрібна явна приватна IPv4-адреса власної LAN.")
+            throw APIError("invalid_configuration", VL("Потрібна явна приватна IPv4-адреса власної LAN.", "Enter an explicit private IPv4 address on your own LAN."))
         }
     }
 
@@ -311,7 +311,7 @@ final class VenusAPI: @unchecked Sendable {
     private static func identity(_ reply: [String: Any], ip: String, port: Int) throws -> [String: Any] {
         guard let result = reply["result"] as? [String: Any], let name = ascii(result["device"], limit: 64),
               result["ip"] == nil || result["ip"] as? String == ip else {
-            throw APIError("invalid_identity", "Marstek повернув некоректну модель або IP пристрою.")
+            throw APIError("invalid_identity", VL("Marstek повернув некоректну модель або IP пристрою.", "Marstek returned an invalid device model or IP."))
         }
         var device: [String: Any] = ["name": name, "ip": ip, "port": port, "supports_pv": aNames.contains(name)]
         for key in ["ble_mac", "wifi_mac"] {
@@ -320,7 +320,7 @@ final class VenusAPI: @unchecked Sendable {
         if let name = displayText(result["wifi_name"], limit: 128) { device["wifi_name"] = name }
         if let raw = result["ver"] {
             guard let version = integer(raw), (0...1_000_000).contains(version) else {
-                throw APIError("invalid_identity", "Marstek повернув некоректну версію прошивки.")
+                throw APIError("invalid_identity", VL("Marstek повернув некоректну версію прошивки.", "Marstek returned an invalid firmware version."))
             }
             device["firmware"] = version
         }
@@ -334,8 +334,8 @@ final class VenusAPI: @unchecked Sendable {
               object["method"] == nil || object["method"] as? String == method else { return nil }
         if let raw = object["error"] {
             guard let error = raw as? [String: Any], let code = integer(error["code"]) else { return nil }
-            if code == -32601 { throw APIError("unsupported_method", "Прошивка Marstek не підтримує цей запит.") }
-            throw APIError("device_error", "Marstek відхилив запит.")
+            if code == -32601 { throw APIError("unsupported_method", VL("Прошивка Marstek не підтримує цей запит.", "Marstek firmware does not support this request.")) }
+            throw APIError("device_error", VL("Marstek відхилив запит.", "Marstek rejected the request."))
         }
         guard let result = object["result"] as? [String: Any] else { return nil }
         if method != "Marstek.GetDevice" {
@@ -358,39 +358,39 @@ final class VenusAPI: @unchecked Sendable {
 
     private static func commandPlan(_ input: [String: Any]) throws -> Plan {
         guard let ip = input["ip"] as? String,
-              let action = input["action"] as? String else { throw APIError("invalid_command", "Очікується одна підтримувана команда Marstek.") }
+              let action = input["action"] as? String else { throw APIError("invalid_command", VL("Очікується одна підтримувана команда Marstek.", "One supported Marstek command is required.")) }
         let specific: [String: Set<String>] = ["set_mode": ["mode"], "set_dod": ["value"], "set_led": ["value"],
             "set_bluetooth_advertising": ["value"], "set_power_version": ["value"],
             "set_passive": ["power", "seconds"], "set_schedule": ["slot", "start", "end", "weekmask", "power", "enabled"],
             "factory_reset": ["keep_energy", "confirmed"]]
         guard let fields = specific[action], Set(input.keys).isSubset(of: fields.union(["ip", "port", "action", "expected_device"])) else {
-            throw APIError("invalid_command", "Команда містить невідомі або зайві параметри.")
+            throw APIError("invalid_command", VL("Команда містить невідомі або зайві параметри.", "The command contains unknown or extra parameters."))
         }
         let port = input["port"] == nil ? 30000 : integer(input["port"])
-        guard let port else { throw APIError("invalid_configuration", "Некоректний UDP-порт Marstek.") }
+        guard let port else { throw APIError("invalid_configuration", VL("Некоректний UDP-порт Marstek.", "Invalid Marstek UDP port.")) }
         try validate(ip: ip, port: port)
         let hasExpected = input["expected_device"] != nil && !(input["expected_device"] is NSNull)
         let expected = hasExpected ? ascii(input["expected_device"], limit: 64) : nil
-        if hasExpected && expected == nil { throw APIError("invalid_command", "Некоректна очікувана модель Marstek.") }
+        if hasExpected && expected == nil { throw APIError("invalid_command", VL("Некоректна очікувана модель Marstek.", "Invalid expected Marstek model.")) }
         var method: String
         var params: [String: Any]
         var mode: String?
         var requestedPower: Int?
         if action == "set_mode" {
             guard let requested = input["mode"] as? String, modes.contains(requested), input["value"] == nil else {
-                throw APIError("invalid_command", "Вибери режим Auto, AI, Manual або UPS.")
+                throw APIError("invalid_command", VL("Вибери режим Auto, AI, Manual або UPS.", "Choose Auto, AI, Manual, or UPS mode."))
             }
             mode = requested
             var config: [String: Any] = ["mode": requested]
             if let key = ["Auto": "auto_cfg", "AI": "ai_cfg", "UPS": "ups_cfg"][requested] { config[key] = ["enable": 1] }
             method = "ES.SetMode"; params = ["id": 0, "config": config]
         } else {
-            guard input["mode"] == nil else { throw APIError("invalid_command", "Параметр режиму не належить цій команді.") }
+            guard input["mode"] == nil else { throw APIError("invalid_command", VL("Параметр режиму не належить цій команді.", "The mode parameter does not belong to this command.")) }
             switch action {
             case "set_passive":
                 guard let power = integer(input["power"]), (-2500...2500).contains(power),
                       let seconds = integer(input["seconds"]), (1...86400).contains(seconds) else {
-                    throw APIError("invalid_command", "Passive: потрібні цілі Вт у межах моделі та від 1 до 86400 секунд.")
+                    throw APIError("invalid_command", VL("Passive: потрібні цілі Вт у межах моделі та від 1 до 86400 секунд.", "Passive requires whole watts within the model limit and 1 to 86400 seconds."))
                 }
                 // Rev3.1 specifies W and seconds but no polarity or countdown bounds.
                 // Signed W is sent unchanged. 24h is an explicit app bound, not a device rating.
@@ -403,7 +403,7 @@ final class VenusAPI: @unchecked Sendable {
                       let week = integer(input["weekmask"]), (1...127).contains(week),
                       let power = integer(input["power"]), (-2500...2500).contains(power),
                       let enabled = boolean(input["enabled"]) else {
-                    throw APIError("invalid_command", "Розклад: слот 0–9, час HH:mm, дні 1–127, цілі Вт і логічний стан.")
+                    throw APIError("invalid_command", VL("Розклад: слот 0–9, час HH:mm, дні 1–127, цілі Вт і логічний стан.", "Schedule requires slot 0–9, HH:mm times, days 1–127, whole watts, and a Boolean state."))
                 }
                 mode = "Manual"; requestedPower = power
                 // One documented slot OBJECT; never an unverified array or E-mini manual_set.
@@ -412,20 +412,20 @@ final class VenusAPI: @unchecked Sendable {
                 method = "ES.SetMode"; params = ["id": 0, "config": ["mode": "Manual", "manual_cfg": slotData]]
             case "factory_reset":
                 guard boolean(input["confirmed"]) == true, let keep = boolean(input["keep_energy"]) else {
-                    throw APIError("confirmation_required", "Скидання потребує явного підтвердження та вибору збереження накопичених даних.")
+                    throw APIError("confirmation_required", VL("Скидання потребує явного підтвердження та вибору збереження накопичених даних.", "Reset requires explicit confirmation and a choice about keeping accumulated data."))
                 }
                 method = "Reset.Factory"; params = ["type": keep ? 2 : 1]
             case "set_dod":
-                guard let value = integer(input["value"]), (30...88).contains(value) else { throw APIError("invalid_command", "DOD має бути цілим числом від 30 до 88.") }
+                guard let value = integer(input["value"]), (30...88).contains(value) else { throw APIError("invalid_command", VL("DOD має бути цілим числом від 30 до 88.", "DOD must be an integer from 30 to 88.")) }
                 method = "DOD.SET"; params = ["value": value]
             case "set_led", "set_bluetooth_advertising":
-                guard let value = boolean(input["value"]) else { throw APIError("invalid_command", "Потрібне логічне значення налаштування.") }
+                guard let value = boolean(input["value"]) else { throw APIError("invalid_command", VL("Потрібне логічне значення налаштування.", "A Boolean setting value is required.")) }
                 if action == "set_led" { method = "Led.Ctrl"; params = ["state": value ? 1 : 0] }
                 else { method = "Ble.Adv"; params = ["enable": value ? 0 : 1] }
             case "set_power_version":
-                guard let value = integer(input["value"]), [800, 1200, 1500, 2500].contains(value) else { throw APIError("invalid_command", "Недокументований ліміт потужності.") }
+                guard let value = integer(input["value"]), [800, 1200, 1500, 2500].contains(value) else { throw APIError("invalid_command", VL("Недокументований ліміт потужності.", "Undocumented power limit.")) }
                 method = "Set.Ver"; params = ["version": value]
-            default: throw APIError("unsupported_action", "Ця команда Marstek не підтримується застосунком.")
+            default: throw APIError("unsupported_action", VL("Ця команда Marstek не підтримується застосунком.", "This Marstek command is not supported by the app."))
             }
         }
         return Plan(ip: ip, port: port, action: action, expected: expected, mode: mode, power: requestedPower, method: method, params: params)
@@ -433,20 +433,20 @@ final class VenusAPI: @unchecked Sendable {
 
     private static func authorize(_ plan: Plan, device: [String: Any]) throws {
         let name = device["name"] as? String ?? ""
-        guard plan.expected == nil || plan.expected == name else { throw APIError("identity_changed", "Модель відповіді не збігається з обраним пристроєм.") }
-        guard e3Names.contains(name) || aNames.contains(name) else { throw APIError("unsupported_device", "Команди доступні лише для Venus E3 та Venus A.") }
+        guard plan.expected == nil || plan.expected == name else { throw APIError("identity_changed", VL("Модель відповіді не збігається з обраним пристроєм.", "The response model does not match the selected device.")) }
+        guard e3Names.contains(name) || aNames.contains(name) else { throw APIError("unsupported_device", VL("Команди доступні лише для Venus E3 та Venus A.", "Commands are available only for Venus E3 and Venus A.")) }
         if ["set_dod", "set_led", "set_bluetooth_advertising", "set_power_version", "factory_reset"].contains(plan.action) {
-            guard let firmware = integer(device["firmware"]), firmware >= 150 else { throw APIError("unsupported_feature", "Це налаштування потребує прошивки 150 або новішої.") }
+            guard let firmware = integer(device["firmware"]), firmware >= 150 else { throw APIError("unsupported_feature", VL("Це налаштування потребує прошивки 150 або новішої.", "This setting requires firmware 150 or later.")) }
         }
         if let power = plan.power {
             // Conservative app caps use the highest documented power version for this model.
             // Firmware/local electrical limits can be lower; ACK does not confirm actual W.
             let cap = e3Names.contains(name) ? 2500 : 1500
-            guard (-cap...cap).contains(power) else { throw APIError("unsupported_feature", "Задана потужність перевищує межу застосунку для цієї моделі.") }
+            guard (-cap...cap).contains(power) else { throw APIError("unsupported_feature", VL("Задана потужність перевищує межу застосунку для цієї моделі.", "The requested power exceeds the app limit for this model.")) }
         }
         if plan.action == "set_power_version" {
             let versions = e3Names.contains(name) ? [800, 2500] : [800, 1200, 1500]
-            guard let value = integer(plan.params["version"]), versions.contains(value) else { throw APIError("unsupported_feature", "Цей ліміт не підтримується визначеною моделлю Marstek.") }
+            guard let value = integer(plan.params["version"]), versions.contains(value) else { throw APIError("unsupported_feature", VL("Цей ліміт не підтримується визначеною моделлю Marstek.", "This limit is not supported by the identified Marstek model.")) }
         }
     }
 
@@ -486,7 +486,7 @@ final class VenusAPI: @unchecked Sendable {
         var output = Normalized()
         for (method, result, received) in samples {
             func invalid(_ raw: String) -> [String: Any] {
-                ["method": method, "code": "invalid_value", "field": raw, "message": "Marstek повернув показник поза підтримуваними межами."]
+                ["method": method, "code": "invalid_value", "field": raw, "message": VL("Marstek повернув показник поза підтримуваними межами.", "Marstek returned a reading outside the supported range.")]
             }
             for field in fields[method] ?? [] {
                 if method == "ES.GetMode", field.metric.hasPrefix("ct_"),
@@ -586,7 +586,7 @@ final class VenusAPI: @unchecked Sendable {
 
     private static func interfaces() throws -> [Interface] {
         var head: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&head) == 0, let first = head else { throw APIError("interface_unavailable", "Не вдалося прочитати локальні мережеві інтерфейси.") }
+        guard getifaddrs(&head) == 0, let first = head else { throw APIError("interface_unavailable", VL("Не вдалося прочитати локальні мережеві інтерфейси.", "Could not read local network interfaces.")) }
         defer { freeifaddrs(head) }
         var pointer: UnsafeMutablePointer<ifaddrs>? = first
         var seen = Set<String>()
@@ -610,7 +610,7 @@ final class VenusAPI: @unchecked Sendable {
                   privateAddress(network), privateAddress(broadcast), seen.insert("\(network)/\(mask)").inserted else { continue }
             found.append((String(cString: item.ifa_name), Interface(ip: ipString(ip), broadcast: ipString(broadcast), mask: mask, network: network, broadcastNumber: broadcast)))
         }
-        guard !found.isEmpty else { throw APIError("interface_unavailable", "Немає активної приватної LAN із підтвердженим broadcast.") }
+        guard !found.isEmpty else { throw APIError("interface_unavailable", VL("Немає активної приватної LAN із підтвердженим broadcast.", "No active private LAN with a verified broadcast address.")) }
         return found.sorted { $0.0 < $1.0 }.prefix(4).map(\.1)
     }
 
@@ -638,7 +638,7 @@ final class VenusAPI: @unchecked Sendable {
                     pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
                 }
                 guard bound == 0 else {
-                    if errno == EADDRINUSE { throw APIError("port_in_use", "UDP-порт Marstek уже зайнятий іншим читанням або застосунком.") }
+                    if errno == EADDRINUSE { throw APIError("port_in_use", VL("UDP-порт Marstek уже зайнятий іншим читанням або застосунком.", "Another reader or app is already using the Marstek UDP port.")) }
                     throw Self.networkError()
                 }
             } catch { Darwin.close(fd); throw error }
@@ -648,8 +648,8 @@ final class VenusAPI: @unchecked Sendable {
         func close() { Darwin.close(descriptor) }
 
         private static func networkError() -> APIError {
-            if errno == EACCES || errno == EPERM { return APIError("permission_denied", "macOS не дозволила доступ до локальної мережі.") }
-            return APIError("network_unavailable", "Не вдалося виконати локальний запит Marstek.")
+            if errno == EACCES || errno == EPERM { return APIError("permission_denied", VL("macOS не дозволила доступ до локальної мережі.", "macOS denied local network access.")) }
+            return APIError("network_unavailable", VL("Не вдалося виконати локальний запит Marstek.", "Could not complete the local Marstek request."))
         }
 
         private static func address(ip: String, port: Int) -> sockaddr_in {
@@ -730,7 +730,7 @@ final class VenusAPI: @unchecked Sendable {
                     return (reply, VenusAPI.timestamp())
                 }
             }
-            throw APIError("timeout", "Marstek не відповів. Перевір Local API, порт і підключення до тієї самої LAN.")
+            throw APIError("timeout", VL("Marstek не відповів. Перевір Local API, порт і підключення до тієї самої LAN.", "Marstek did not respond. Check Local API, the port, and connection to the same LAN."))
         }
     }
 
@@ -740,7 +740,7 @@ final class VenusAPI: @unchecked Sendable {
         let bytes: [UInt8]
         var index = 0
         init(_ data: Data) throws {
-            guard data.count <= 8192 else { throw APIError("invalid_json", "Некоректна відповідь Marstek.") }
+            guard data.count <= 8192 else { throw APIError("invalid_json", VL("Некоректна відповідь Marstek.", "Invalid Marstek response.")) }
             bytes = Array(data)
         }
         mutating func parse() throws -> Any {
@@ -749,7 +749,7 @@ final class VenusAPI: @unchecked Sendable {
             guard index == bytes.count else { throw bad() }
             return value
         }
-        private func bad() -> APIError { APIError("invalid_json", "Некоректна відповідь Marstek.") }
+        private func bad() -> APIError { APIError("invalid_json", VL("Некоректна відповідь Marstek.", "Invalid Marstek response.")) }
         private mutating func space() { while index < bytes.count && [9, 10, 13, 32].contains(bytes[index]) { index += 1 } }
         private mutating func consume(_ byte: UInt8) -> Bool {
             space(); guard index < bytes.count, bytes[index] == byte else { return false }
@@ -809,7 +809,7 @@ final class VenusAPI: @unchecked Sendable {
     /// Pure parser/normalization/permission checks. Never creates a socket.
     static func selfCheck() throws {
         func require(_ condition: @autoclosure () throws -> Bool) throws {
-            if try !condition() { throw APIError("selfcheck_failed", "Перевірка автономного Venus API не пройшла.") }
+            if try !condition() { throw APIError("selfcheck_failed", VL("Перевірка автономного Venus API не пройшла.", "The offline Venus API self-check failed.")) }
         }
         func rejected(_ body: () throws -> Void) -> Bool { do { try body(); return false } catch { return true } }
         let exactReads = ["Marstek.GetDevice", "ES.GetStatus", "Bat.GetStatus", "ES.GetMode", "EM.GetStatus", "Wifi.GetStatus", "BLE.GetStatus", "PV.GetStatus"]

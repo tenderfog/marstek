@@ -27,7 +27,7 @@ jobs:
 
       - name: Verify universal binary and archive
         run: |
-          xcrun lipo -verify_arch arm64 x86_64 build/VenusBar.app/Contents/MacOS/VenusBar
+          xcrun lipo build/VenusBar.app/Contents/MacOS/VenusBar -verify_arch arm64 x86_64
           unzip -tq build/VenusBar.zip
 
       - name: Create SHA-256 checksum

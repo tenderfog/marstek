@@ -18,18 +18,20 @@ struct VenusBarMain {
                 try VenusIndicatorEvidence.selfCheck()
                 try VenusTemperature.selfCheck()
                 try VenusPowerSnapshot.selfCheck()
+                try VenusLocalization.selfCheck()
+                try VenusMenuTiming.selfCheck()
                 print("VenusBar self-check: passed")
                 return
             }
             if CommandLine.arguments.contains("--read-once") {
                 let args = CommandLine.arguments
                 guard let index = args.firstIndex(of: "--ip"), args.indices.contains(index + 1) else {
-                    throw VenusStoreError.message("Для --read-once вкажи --ip та, за потреби, --port.")
+                    throw VenusStoreError.message(VL("Для --read-once вкажи --ip та, за потреби, --port.", "Use --ip and optionally --port with --read-once."))
                 }
                 let port: Int
                 if let index = args.firstIndex(of: "--port") {
                     guard args.indices.contains(index + 1), let parsed = Int(args[index + 1]) else {
-                        throw VenusStoreError.message("Некоректний --port.")
+                        throw VenusStoreError.message(VL("Некоректний --port.", "Invalid --port."))
                     }
                     port = parsed
                 } else { port = 30000 }
@@ -126,6 +128,7 @@ private struct MenuBarIslandShape: Shape {
 
 @MainActor
 private struct VenusHoverSurface: View {
+    @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject var store: VenusStore
     @ObservedObject var outages: VenusOutagesStore
     let appearance: NSAppearance?
@@ -173,13 +176,13 @@ private struct VenusHoverSurface: View {
     }
 
     private var title: String {
-        if store.configuration == nil { return "Підключити станцію" }
-        if store.isReading { return "З’єднуємося зі станцією" }
-        return store.error == nil ? "Станція очікує" : "Станція недоступна"
+        if store.configuration == nil { return VL("Підключити станцію", "Connect a station") }
+        if store.isReading { return VL("З’єднуємося зі станцією", "Connecting to the station") }
+        return store.error == nil ? VL("Станція очікує", "Station ready") : VL("Станція недоступна", "Station unavailable")
     }
     private var subtitle: String {
-        if store.configuration == nil { return "Локально через Wi-Fi або LAN" }
-        return store.isReading ? store.ip : "Перевірити підключення"
+        if store.configuration == nil { return VL("Локально через Wi-Fi або LAN", "Locally over Wi-Fi or LAN") }
+        return store.isReading ? store.ip : VL("Перевірити підключення", "Check connection")
     }
 }
 
@@ -193,6 +196,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
     private var island: NSPanel?
     private var subscription: AnyCancellable?
     private var outageSubscription: AnyCancellable?
+    private var languageSubscription: AnyCancellable?
     private var exitMonitor: Any?
     private var localMonitor: Any?
     private var hideWork: DispatchWorkItem?
@@ -206,14 +210,18 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
         store.report == nil ? NSSize(width: 300, height: 82) : NSSize(width: 356, height: outages.selection == nil ? 108 : 174)
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    private func configureApplicationMenu() {
         let appMenu = NSMenu()
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "VenusBar")
-        applicationMenu.addItem(withTitle: "Вийти з VenusBar", action: #selector(quit), keyEquivalent: "q").target = self
+        applicationMenu.addItem(withTitle: VL("Вийти з VenusBar", "Quit VenusBar"), action: #selector(quit), keyEquivalent: "q").target = self
         applicationItem.submenu = applicationMenu
         appMenu.addItem(applicationItem)
         NSApp.mainMenu = appMenu
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        configureApplicationMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else { return }
         button.target = self
@@ -227,7 +235,16 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { self?.updateStatus() }
         }
         outageSubscription = outages.objectWillChange.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.resizeIslandIfVisible() }
+            DispatchQueue.main.async { self?.updateStatus(); self?.resizeIslandIfVisible() }
+        }
+        languageSubscription = VenusLocalization.shared.$language.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.configureApplicationMenu()
+                self.statusPresentation = nil
+                self.updateStatus()
+                if self.store.isPolling { self.store.reload() }
+            }
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showFromNotification),
             name: Notification.Name("local.offline.VenusBar.open"), object: nil)
@@ -241,8 +258,13 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             }
             return event
         }
-        if store.configuration == nil || CommandLine.arguments.contains("--open-panel") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in self?.showFullPanel() }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"
+        let firstLaunchOfVersion = UserDefaults.standard.string(forKey: "presentedVersion") != version
+        if store.configuration == nil || firstLaunchOfVersion || CommandLine.arguments.contains("--open-panel") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.showFullPanel()
+                UserDefaults.standard.set(version, forKey: "presentedVersion")
+            }
         } else if CommandLine.arguments.contains("--preview-island") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in self?.showIsland() }
         }
@@ -296,9 +318,9 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             overIcon = false
             hideIsland(animated: false)
             let menu = NSMenu()
-            menu.addItem(withTitle: "Відкрити VenusBar", action: #selector(openPanelAction), keyEquivalent: "")
+            menu.addItem(withTitle: VL("Відкрити VenusBar", "Open VenusBar"), action: #selector(openPanelAction), keyEquivalent: "")
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Вийти з VenusBar", action: #selector(quit), keyEquivalent: "q")
+            menu.addItem(withTitle: VL("Вийти з VenusBar", "Quit VenusBar"), action: #selector(quit), keyEquivalent: "q")
             for item in menu.items { item.target = self }
             statusItem.popUpMenu(menu)
         } else if fullPanel?.isVisible == true { closePanels() }
@@ -313,7 +335,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             energy.record(report: report, device: device, flow: store.flowState)
         }
         guard let button = statusItem?.button else { return }
-        let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Станція")
+        let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: VL("Станція", "Station"))
         bolt?.isTemplate = true
         if button.image == nil { button.image = bolt }
         button.imagePosition = .imageLeft
@@ -322,13 +344,16 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             guard statusPresentation != presentation else { return }
             statusPresentation = presentation
             button.attributedTitle = NSAttributedString(string: "")
-            button.setAccessibilityLabel(store.configuration == nil ? "VenusBar · Підключити станцію" : "VenusBar · З’єднання зі станцією")
+            button.setAccessibilityLabel(store.configuration == nil ? VL("VenusBar · Підключити станцію", "VenusBar · Connect a station") : VL("VenusBar · З’єднання зі станцією", "VenusBar · Connecting to station"))
             resizeIslandIfVisible()
             return
         }
         let percentage = report.socPercent.map { "\(Int($0.rounded()))%" } ?? ""
         let state = store.flowState
-        let presentation = "\(percentage)|\(state.rawValue)|\(store.isFresh)"
+        let nextChange = outages.nextChange()
+        let urgent = VenusMenuTiming.isUrgentOutage(date: nextChange?.time, isRestoration: nextChange?.isRestoration ?? false)
+        let planState = outages.currentPlanState
+        let presentation = "\(percentage)|\(state.rawValue)|\(store.isFresh)|\(nextChange?.titleShort ?? "")|\(nextChange?.timeText ?? "")|\(urgent)|\(VenusLanguage.current.rawValue)|\(planState)"
         guard statusPresentation != presentation else { return }
         statusPresentation = presentation
         let symbol: String
@@ -350,9 +375,48 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             suffix.addAttribute(.baselineOffset, value: -2, range: NSRange(location: 0, length: suffix.length))
             label.append(suffix)
         }
+        if outages.selection != nil, planState == .noOutagePlanned || planState == .outagePlanned {
+            label.append(NSAttributedString(string: "  ", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+            let gridOn = planState == .noOutagePlanned
+            let gridSymbol = gridOn ? "bolt.fill" : "bolt.slash.fill"
+            let gridColor = gridOn ? NSColor.systemGreen : NSColor.systemRed
+            if let image = coloredSymbol(gridSymbol, color: gridColor) {
+                let attachment = NSTextAttachment()
+                attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
+                let icon = NSMutableAttributedString(attachment: attachment)
+                icon.addAttribute(.baselineOffset, value: -2, range: NSRange(location: 0, length: icon.length))
+                label.append(icon)
+            }
+            if let nextChange, urgent {
+                label.append(NSAttributedString(string: " "))
+                let attachment = NSTextAttachment()
+                attachment.attachmentCell = NSTextAttachmentCell(imageCell: outageTimeBadge(nextChange.timeText))
+                let badge = NSMutableAttributedString(attachment: attachment)
+                badge.addAttribute(.baselineOffset, value: -3, range: NSRange(location: 0, length: badge.length))
+                label.append(badge)
+            } else if let nextChange {
+                label.append(NSAttributedString(string: " " + nextChange.timeText, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: NSColor.labelColor]))
+            }
+        }
         button.attributedTitle = label
-        button.setAccessibilityLabel("VenusBar, \(percentage), \(store.flowText)")
+        let scheduleLabel = nextChange.map { VL(", за графіком \($0.titleShort.lowercased()) о \($0.timeText)", ", \($0.titleShort.lowercased()) at \($0.timeText) according to the schedule") } ?? ""
+        button.setAccessibilityLabel("VenusBar, \(percentage), \(store.flowText)\(scheduleLabel)")
         resizeIslandIfVisible()
+    }
+
+    private func outageTimeBadge(_ time: String) -> NSImage {
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white]
+        let textSize = (time as NSString).size(withAttributes: attributes)
+        let image = NSImage(size: NSSize(width: ceil(textSize.width) + 12, height: 18))
+        image.lockFocus()
+        NSColor.systemRed.setFill()
+        NSBezierPath(roundedRect: NSRect(origin: .zero, size: image.size), xRadius: 6, yRadius: 6).fill()
+        (time as NSString).draw(at: NSPoint(x: 6, y: (18 - textSize.height) / 2), withAttributes: attributes)
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 
     private func coloredSymbol(_ name: String, color: NSColor) -> NSImage? {
@@ -393,7 +457,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
                 .onPreferenceChange(VenusPanelHeightPreferenceKey.self) { [weak self] height in
                     DispatchQueue.main.async {
                         guard let self, let panel = self.fullPanel, panel.isVisible else { return }
-                        let size = NSSize(width: 520, height: max(430, min(610, height)))
+                        let size = NSSize(width: 520, height: max(430, min(770, height)))
                         panel.setFrame(self.panelFrame(size: size, attached: false), display: true)
                     }
                 }
@@ -404,7 +468,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let panel = fullPanel else { return }
         let fitting = panel.contentView?.fittingSize ?? NSSize(width: 520, height: 610)
-        let size = NSSize(width: 520, height: max(430, min(610, fitting.height)))
+        let size = NSSize(width: 520, height: max(430, min(770, fitting.height)))
         panel.setFrame(panelFrame(size: size, attached: false), display: true)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -450,7 +514,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
 
     private func resizeFullPanelIfVisible() {
         guard let panel = fullPanel, panel.isVisible else { return }
-        let height = max(430, min(610, panel.contentView?.fittingSize.height ?? 610))
+        let height = max(430, min(770, panel.contentView?.fittingSize.height ?? 610))
         guard panel.frame.height != height else { return }
         panel.setFrame(panelFrame(size: NSSize(width: 520, height: height), attached: false), display: true)
     }
@@ -462,7 +526,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
         else { panel = NSPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false) }
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = false
+        panel.hasShadow = interactive
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)

@@ -19,17 +19,17 @@ enum VenusFlowState: String, Codable {
     case supplyingHome, charging, mains, standby, unknown
     var title: String {
         switch self {
-        case .supplyingHome: return "Розряджається"
-        case .charging: return "Заряджається"
-        case .mains: return "Загальна мережа"
-        case .standby: return "Очікування"
-        case .unknown: return "Стан не визначено"
+        case .supplyingHome: return VL("Розряджається", "Discharging")
+        case .charging: return VL("Заряджається", "Charging")
+        case .mains: return VL("Загальна мережа", "Grid supply")
+        case .standby: return VL("Очікування", "Standby")
+        case .unknown: return VL("Стан не визначено", "State unknown")
         }
     }
     var color: Color {
         switch self {
-        case .supplyingHome: return Color(red: 0.22, green: 0.83, blue: 0.50)
-        case .charging: return Color(red: 240.0 / 255, green: 120.0 / 255, blue: 68.0 / 255)
+        case .supplyingHome: return VenusVisuals.supplying
+        case .charging: return VenusVisuals.charging
         case .mains: return Color(white: 0.65)
         case .standby: return Color(white: 0.9)
         case .unknown: return Color(white: 0.48)
@@ -39,7 +39,7 @@ enum VenusFlowState: String, Codable {
 
 enum VenusMode: String, CaseIterable {
     case auto = "Auto", ai = "AI", manual = "Manual", ups = "UPS"
-    var title: String { switch self { case .auto: return "Автоматичний"; case .ai: return "AI"; case .manual: return "Ручний"; case .ups: return "UPS" } }
+    var title: String { switch self { case .auto: return VL("Автоматичний", "Automatic"); case .ai: return "AI"; case .manual: return VL("Ручний", "Manual"); case .ups: return "UPS" } }
 }
 
 enum VenusAction {
@@ -153,17 +153,17 @@ struct VenusReport: Codable {
     }
 
     func validate() throws {
-        guard schemaVersion == 1, observationDate != nil else { throw VenusStoreError.message("Некоректний звіт станції.") }
-        if let value = socPercent, !value.isFinite || !(0...100).contains(value) { throw VenusStoreError.message("Некоректний заряд батареї.") }
+        guard schemaVersion == 1, observationDate != nil else { throw VenusStoreError.message(VL("Некоректний звіт станції.", "Invalid station report.")) }
+        if let value = socPercent, !value.isFinite || !(0...100).contains(value) { throw VenusStoreError.message(VL("Некоректний заряд батареї.", "Invalid battery charge.")) }
         for value in [batteryPowerW, gridPowerW, offgridPowerW, pvPowerW].compactMap({ $0 }) {
-            guard value.isFinite, abs(value) <= 20_000 else { throw VenusStoreError.message("Потужність поза підтримуваними межами.") }
+            guard value.isFinite, abs(value) <= 20_000 else { throw VenusStoreError.message(VL("Потужність поза підтримуваними межами.", "Power is outside the supported range.")) }
         }
-        if let value = batteryTemperatureC, !value.isFinite || !(-273.15...150).contains(value) { throw VenusStoreError.message("Некоректна температура батареї.") }
+        if let value = batteryTemperatureC, !value.isFinite || !(-273.15...150).contains(value) { throw VenusStoreError.message(VL("Некоректна температура батареї.", "Invalid battery temperature.")) }
         for value in [batteryRemainingWh, batteryRatedWh, gridInputWh, gridOutputWh, loadEnergyWh, solarEnergyWh].compactMap({ $0 }) {
-            guard value.isFinite, value >= 0 else { throw VenusStoreError.message("Некоректний лічильник енергії.") }
+            guard value.isFinite, value >= 0 else { throw VenusStoreError.message(VL("Некоректний лічильник енергії.", "Invalid energy counter.")) }
         }
         guard pvChannels.count <= 4, Set(pvChannels.map(\.id)).count == pvChannels.count,
-              pvChannels.allSatisfy({ (1...4).contains($0.id) }) else { throw VenusStoreError.message("Некоректні сонячні входи.") }
+              pvChannels.allSatisfy({ (1...4).contains($0.id) }) else { throw VenusStoreError.message(VL("Некоректні сонячні входи.", "Invalid solar inputs.")) }
     }
 
     static func date(_ text: String) -> Date? {
@@ -193,7 +193,7 @@ struct VenusConfiguration: Codable {
               octets[0] == 10 || octets[0] == 192 && octets[1] == 168 || octets[0] == 172 && (16...31).contains(octets[1]),
               (1024...65535).contains(port), [10.0, 30.0, 60.0].contains(refreshInterval),
               chargingGridSign == nil || chargingGridSign == -1 || chargingGridSign == 1 else {
-            throw VenusStoreError.message("Вкажи приватну IPv4-адресу станції та порт 1024–65535.")
+            throw VenusStoreError.message(VL("Вкажи приватну IPv4-адресу станції та порт 1024–65535.", "Enter the station’s private IPv4 address and a port from 1024 to 65535."))
         }
     }
 }
@@ -259,22 +259,22 @@ final class VenusStore: ObservableObject {
         Self.flow(report: report, configuration: configuration, fresh: isFresh, now: Date(), model: model)
     }
     var flowText: String {
-        if !isPolling, configuration != nil { return "Читання призупинено" }
-        if report != nil, !isFresh { return "Немає свіжих даних" }
+        if !isPolling, configuration != nil { return VL("Читання призупинено", "Reading paused") }
+        if report != nil, !isFresh { return VL("Немає свіжих даних", "No recent data") }
         return flowState.title
     }
     var statusText: String {
-        if isDiscovering { return "Шукаємо станції в локальній мережі…" }
-        if isReading { return "Читаємо локальний API…" }
+        if isDiscovering { return VL("Шукаємо станції в локальній мережі…", "Searching the local network for stations…") }
+        if isReading { return VL("Читаємо локальний API…", "Reading the local API…") }
         if let connectionNotice { return connectionNotice }
         if let date = report?.observationDate {
-            return "\(isFresh ? "Локальний API" : "Остання відповідь") · \(date.formatted(date: .omitted, time: .shortened))"
+            return "\(isFresh ? VL("Локальний API", "Local API") : VL("Остання відповідь", "Last response")) · \(date.formatted(.dateTime.hour().minute().locale(VenusLanguage.current.locale)))"
         }
-        return "Підключи станцію через локальний API"
+        return VL("Підключи станцію через локальний API", "Connect a station using its local API")
     }
     var connectionNotice: String? {
         guard let error else { return nil }
-        return isFresh ? "Тимчасово немає відповіді · повторюємо запит" : error
+        return isFresh ? VL("Тимчасово немає відповіді · повторюємо запит", "Temporarily no response · retrying") : error
     }
     var stationImage: NSImage? { nil }
 
@@ -285,13 +285,13 @@ final class VenusStore: ObservableObject {
         if FileManager.default.fileExists(atPath: url.path) {
             do {
                 let data = try Data(contentsOf: url)
-                guard data.count <= 8192 else { throw VenusStoreError.message("Налаштування завеликі.") }
+                guard data.count <= 8192 else { throw VenusStoreError.message(VL("Налаштування завеликі.", "Settings are too large.")) }
                 let config = try JSONDecoder().decode(VenusConfiguration.self, from: data)
                 try config.validate()
                 configuration = config
                 restoreReading(for: config)
                 if config.enabled { start() }
-            } catch { self.error = "Не вдалося відновити підключення: \(error.localizedDescription)" }
+            } catch { self.error = VL("Не вдалося відновити підключення: \(error.localizedDescription)", "Could not restore the connection: \(error.localizedDescription)") }
         }
         clock = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.objectWillChange.send() }
@@ -299,7 +299,7 @@ final class VenusStore: ObservableObject {
     }
 
     func configure(ip: String, port: Int, model: VenusModel = .unknown) throws {
-        guard !commandBusy else { throw VenusStoreError.message("Дочекайся завершення команди.") }
+        guard !commandBusy else { throw VenusStoreError.message(VL("Дочекайся завершення команди.", "Wait for the command to finish.")) }
         let config = VenusConfiguration(ip: ip.trimmingCharacters(in: .whitespacesAndNewlines), port: port)
         try config.validate()
         try persist(config)
@@ -332,7 +332,7 @@ final class VenusStore: ObservableObject {
         timer?.invalidate(); timer = nil
         generation += 1
         operation?.cancel(); activeAPI?.cancel()
-        if commandBusy { commandStatus = "Команду перервано; результат не підтверджено. Перевір стан перед повторенням." }
+        if commandBusy { commandStatus = VL("Команду перервано; результат не підтверджено. Перевір стан перед повторенням.", "Command interrupted; its result is unconfirmed. Check the station before retrying.") }
         commandBusy = false
         isPolling = false; isReading = false; isDiscovering = false
     }
@@ -356,21 +356,21 @@ final class VenusStore: ObservableObject {
         do {
             if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
             startsAtLogin = SMAppService.mainApp.status == .enabled
-            if enabled, !startsAtLogin { error = "Дозволь VenusBar працювати у фоновому режимі в налаштуваннях macOS." }
-        } catch { self.error = "Автозапуск недоступний. Перемісти VenusBar до «Програм» і спробуй ще раз." }
+            if enabled, !startsAtLogin { error = VL("Дозволь VenusBar працювати у фоновому режимі в налаштуваннях macOS.", "Allow VenusBar to run in the background in macOS Settings.") }
+        } catch { self.error = VL("Автозапуск недоступний. Перемісти VenusBar до «Програм» і спробуй ще раз.", "Launch at login is unavailable. Move VenusBar to Applications and try again.") }
     }
 
     func calibrate(_ state: VenusFlowState) throws {
-        guard isFresh, let report, var config = configuration, let device else { throw VenusStoreError.message("Спочатку отримай свіжі показники станції.") }
+        guard isFresh, let report, var config = configuration, let device else { throw VenusStoreError.message(VL("Спочатку отримай свіжі показники станції.", "Get recent station readings first.")) }
         if state == .mains {
             guard report.fresh("grid_power_w"), let watts = report.gridPowerW, abs(watts) <= 25,
                   !report.fresh("offgrid_power_w") || abs(report.offgridPowerW ?? 0) <= 25 else {
-                throw VenusStoreError.message("Станція передає енергію. Перевір фактичне джерело живлення.")
+                throw VenusStoreError.message(VL("Станція передає енергію. Перевір фактичне джерело живлення.", "The station is transferring energy. Check the actual power source."))
             }
             config.confirmedMainsAt = Date()
         } else if state == .charging || state == .supplyingHome {
             guard report.fresh("grid_power_w"), let watts = report.gridPowerW, abs(watts) > 25 else {
-                throw VenusStoreError.message("Для перевірки напрямку потрібен помітний потік у мережевому каналі.")
+                throw VenusStoreError.message(VL("Для перевірки напрямку потрібен помітний потік у мережевому каналі.", "A measurable flow through the grid channel is needed to check its direction."))
             }
             let sign = watts < 0 ? -1 : 1
             config.chargingGridSign = state == .charging ? sign : -sign
@@ -421,7 +421,7 @@ final class VenusStore: ObservableObject {
         let encoder = JSONEncoder()
         guard let old = try JSONSerialization.jsonObject(with: encoder.encode(previous)) as? [String: Any],
               var combined = try JSONSerialization.jsonObject(with: encoder.encode(incoming)) as? [String: Any] else {
-            throw VenusStoreError.message("Не вдалося поєднати показники станції.")
+            throw VenusStoreError.message(VL("Не вдалося поєднати показники станції.", "Could not combine station readings."))
         }
         let metadata: Set<String> = ["schema_version", "observed_at", "metric_observed_at", "component_status", "component_observed_at"]
         var clocks = incoming.metricObservedAt ?? [:]
@@ -463,11 +463,11 @@ final class VenusStore: ObservableObject {
                     try await Task.detached(priority: .utility) {
                         switch job {
                         case .read:
-                            guard let config else { throw VenusStoreError.message("Немає підключення.") }
+                            guard let config else { throw VenusStoreError.message(VL("Немає підключення.", "No connection.")) }
                             return try api.read(ip: config.ip, port: config.port)
                         case .discover(let selectedPort): return try api.discover(port: selectedPort)
                         case .command(let action):
-                            guard let config, let name else { throw VenusStoreError.message("Станцію не визначено.") }
+                            guard let config, let name else { throw VenusStoreError.message(VL("Станцію не визначено.", "Station not identified.")) }
                             var command = action.parameters
                             command["ip"] = config.ip; command["port"] = config.port; command["expected_device"] = name
                             return try api.command(command)
@@ -475,15 +475,15 @@ final class VenusStore: ObservableObject {
                     }.value
                 }, onCancel: { api.cancel() })
                 guard !Task.isCancelled, token == self.generation else { return }
-                guard data.count <= 64 * 1024 else { throw VenusStoreError.message("Відповідь станції завелика.") }
+                guard data.count <= 64 * 1024 else { throw VenusStoreError.message(VL("Відповідь станції завелика.", "Station response is too large.")) }
                 let envelope = try JSONDecoder().decode(VenusEnvelope.self, from: data)
-                guard envelope.ok else { throw VenusStoreError.message(envelope.error?.message ?? "Станція не відповіла.") }
+                guard envelope.ok else { throw VenusStoreError.message(envelope.error?.message ?? VL("Станція не відповіла.", "The station did not respond.")) }
                 switch job {
                 case .discover:
                     self.discoveredDevices = Array((envelope.devices ?? []).prefix(16))
-                    self.error = self.discoveredDevices.isEmpty ? "Не отримали відповідь. Спробуй ще раз або введи IP вручну." : nil
+                    self.error = self.discoveredDevices.isEmpty ? VL("Не отримали відповідь. Спробуй ще раз або введи IP вручну.", "No response received. Try again or enter the IP manually.") : nil
                 case .read:
-                    guard let report = envelope.report, let device = envelope.device else { throw VenusStoreError.message("Показників ще немає.") }
+                    guard let report = envelope.report, let device = envelope.device else { throw VenusStoreError.message(VL("Показників ще немає.", "No readings yet.")) }
                     let identityChanged = self.device.map { !$0.isSameStation(as: device) } ?? false
                     let nameChanged = (self.configuration?.expectedName).map { $0 != device.name } ?? false
                     let combined = try Self.mergedReport(previous: self.report, previousDevice: self.device,
@@ -496,12 +496,12 @@ final class VenusStore: ObservableObject {
                     self.error = nil
                     self.warning = envelope.errors?.first?.message
                     do { try self.persistReading(device: device, report: combined) }
-                    catch { self.warning = "Не вдалося зберегти останні показники на Mac." }
+                    catch { self.warning = VL("Не вдалося зберегти останні показники на Mac.", "Could not save the latest readings on this Mac.") }
                 case .command(let action):
-                    self.commandStatus = envelope.verified == true ? "Новий режим підтверджено станцією." : "API прийняв команду. Поточний фізичний стан ще не підтверджено."
+                    self.commandStatus = envelope.verified == true ? VL("Новий режим підтверджено станцією.", "The station confirmed the new mode.") : VL("API прийняв команду. Поточний фізичний стан ще не підтверджено.", "The API accepted the command. The actual physical state is still unconfirmed.")
                     if case .factoryReset = action {
                         self.pause()
-                        self.commandStatus = "API прийняв скидання. Підключи станцію заново в MARSTEK, а потім у VenusBar."
+                        self.commandStatus = VL("API прийняв скидання. Підключи станцію заново в MARSTEK, а потім у VenusBar.", "The API accepted the reset. Reconnect the station in MARSTEK, then in VenusBar.")
                     } else {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.reload() }
                     }

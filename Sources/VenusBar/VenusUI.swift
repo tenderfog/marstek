@@ -51,7 +51,7 @@ struct VenusSoftPlaceholder: View {
 
     var body: some View {
         Capsule().fill(.white.opacity(0.13)).frame(width: width, height: height)
-            .accessibilityLabel("Показник ще не отримано")
+            .accessibilityLabel(VL("Показник ще не отримано", "No reading received yet"))
     }
 }
 
@@ -83,7 +83,7 @@ struct VenusLoadingOrb: View {
         .background(VenusViewActivity(isActive: $visible))
         .onDisappear { visible = false }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(active ? "Очікуємо відповідь станції" : "Підключення до станції")
+        .accessibilityLabel(active ? VL("Очікуємо відповідь станції", "Waiting for the station") : VL("Підключення до станції", "Connect to the station"))
     }
 }
 

@@ -1,8 +1,11 @@
 import SwiftUI
 
 enum VenusVisuals {
-    static let charging = Color(red: 240 / 255, green: 120 / 255, blue: 68 / 255)
-    static let supplying = Color(red: 0.25, green: 0.84, blue: 0.53)
+    static let success = Color(red: 0.25, green: 0.84, blue: 0.53)
+    static let danger = Color(red: 1, green: 0.32, blue: 0.37)
+    static let warning = Color(red: 240 / 255, green: 120 / 255, blue: 68 / 255)
+    static let charging = success
+    static let supplying = danger
     static func accent(_ state: VenusFlowState, fresh: Bool = true) -> Color {
         guard fresh else { return .white.opacity(0.35) }
         switch state {
@@ -14,15 +17,15 @@ enum VenusVisuals {
         }
     }
     static func number(_ value: Double, digits: Int = 1) -> String {
-        value.formatted(.number.precision(.fractionLength(0...digits)).locale(Locale(identifier: "uk_UA")))
+        value.formatted(.number.precision(.fractionLength(0...digits)).locale(VenusLanguage.current.locale))
     }
     static func power(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
-        return abs(value) >= 1000 ? "\(number(value / 1000, digits: 2)) кВт" : "\(number(value)) Вт"
+        return abs(value) >= 1000 ? VL("\(number(value / 1000, digits: 2)) кВт", "\(number(value / 1000, digits: 2)) kW") : VL("\(number(value)) Вт", "\(number(value)) W")
     }
     static func energy(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "—" }
-        return value >= 1000 ? "\(number(value / 1000, digits: 2)) кВт·год" : "\(number(value)) Вт·год"
+        return value >= 1000 ? VL("\(number(value / 1000, digits: 2)) кВт·год", "\(number(value / 1000, digits: 2)) kWh") : VL("\(number(value)) Вт·год", "\(number(value)) Wh")
     }
     static func soc(_ value: Double?) -> String {
         guard let value, value.isFinite, (0...100).contains(value) else { return "—" }
@@ -42,7 +45,7 @@ struct VenusTemperatureIcon: View {
         case .unknown: return adaptive ? .primary.opacity(0.35) : .white.opacity(0.3)
         case .normal: return adaptive ? .primary.opacity(0.7) : .white.opacity(0.75)
         case .warm: return Color(red: 0.96, green: 0.77, blue: 0.27)
-        case .hot: return VenusVisuals.charging
+        case .hot: return VenusVisuals.warning
         case .high: return Color(red: 1, green: 0.32, blue: 0.37)
         }
     }
@@ -60,7 +63,7 @@ struct VenusTemperatureIcon: View {
         }.frame(width: size, height: size)
             .help(reading.title + ". " + reading.explanation)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(reading.value.map { "\(reading.title), \(VenusVisuals.number($0)) градусів Цельсія" } ?? reading.title)
+            .accessibilityLabel(reading.value.map { VL("\(reading.title), \(VenusVisuals.number($0)) градусів Цельсія", "\(reading.title), \(VenusVisuals.number($0)) degrees Celsius") } ?? reading.title)
     }
 }
 
@@ -73,6 +76,11 @@ enum VenusWave {
         case .mains, .standby, .unknown: return nil
         }
     }
+    static func stripFill(fraction: Double, state: VenusFlowState, phase: Double) -> ClosedRange<Double>? {
+        guard let edge = position(fraction: fraction, state: state, phase: phase),
+              state == .charging && fraction < 1 || state == .supplyingHome && fraction > 0 else { return nil }
+        return min(fraction, edge)...max(fraction, edge)
+    }
     static func selfCheck() throws {
         guard position(fraction: 0.63, state: .charging, phase: 0) == 0.63,
               position(fraction: 0.63, state: .charging, phase: 1) == 1,
@@ -80,7 +88,15 @@ enum VenusWave {
               position(fraction: 0.63, state: .supplyingHome, phase: 1) == 0,
               position(fraction: 0.63, state: .unknown, phase: 0.5) == nil,
               position(fraction: 1, state: .standby, phase: 0.5) == nil,
-              position(fraction: .nan, state: .charging, phase: 0.5) == nil else {
+              position(fraction: .nan, state: .charging, phase: 0.5) == nil,
+              stripFill(fraction: 0.6, state: .charging, phase: 0) == 0.6...0.6,
+              stripFill(fraction: 0.6, state: .charging, phase: 0.5) == 0.6...0.8,
+              stripFill(fraction: 0.6, state: .charging, phase: 1) == 0.6...1,
+              stripFill(fraction: 0.6, state: .supplyingHome, phase: 0.5) == 0.3...0.6,
+              stripFill(fraction: 0.6, state: .supplyingHome, phase: 1) == 0...0.6,
+              stripFill(fraction: 1, state: .charging, phase: 0.5) == nil,
+              stripFill(fraction: 0, state: .supplyingHome, phase: 0.5) == nil,
+              stripFill(fraction: 0.6, state: .unknown, phase: 0.5) == nil else {
             throw VenusStoreError.message("SOC wave direction regression")
         }
     }
@@ -91,12 +107,18 @@ struct VenusSOCOrb: View {
     let fresh: Bool
     let flow: VenusFlowState
     let status: String
+    var remainingWh: Double? = nil
+    var remainingFresh = false
     var diameter: CGFloat = 180
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = false
     private var fraction: Double? {
         guard let value, value.isFinite, (0...100).contains(value) else { return nil }
         return value / 100
+    }
+    private var remainingText: String? {
+        guard let remainingWh, remainingWh.isFinite, remainingWh >= 0 else { return nil }
+        return VenusVisuals.energy(remainingWh)
     }
     private var moving: Bool { visible && !reduceMotion && fresh && fraction != nil && (flow == .charging || flow == .supplyingHome) }
     var body: some View {
@@ -123,12 +145,17 @@ struct VenusSOCOrb: View {
                         .rotationEffect(.degrees(-90)).padding(13)
                         .shadow(color: .white.opacity(0.35), radius: 3)
                 }
-                VStack(spacing: 8) {
+                VStack(spacing: remainingText == nil ? 8 : 6) {
                     if fraction != nil {
                         Text(VenusVisuals.soc(value)).font(.system(size: 39, weight: .medium, design: .rounded))
                             .monospacedDigit().foregroundStyle(.white.opacity(fresh ? 1 : 0.5))
                     } else {
                         VenusSoftPlaceholder(width: 48, height: 6).frame(height: 47)
+                    }
+                    if let remainingText {
+                        Text(remainingText).font(.system(size: 13, weight: .medium)).monospacedDigit()
+                            .foregroundStyle(.white.opacity(remainingFresh ? 0.76 : 0.36))
+                            .lineLimit(1).minimumScaleFactor(0.8)
                     }
                     Text(status).font(.system(size: 11, weight: .medium))
                         .foregroundStyle(fresh ? accent : .white.opacity(0.45))
@@ -138,7 +165,8 @@ struct VenusSOCOrb: View {
         }.frame(width: diameter, height: diameter)
             .background(VenusViewActivity(isActive: $visible)).onDisappear { visible = false }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Заряд батареї \(VenusVisuals.soc(value)). \(status)")
+            .accessibilityLabel(VL("Заряд батареї \(VenusVisuals.soc(value)). \(status)", "Battery charge \(VenusVisuals.soc(value)). \(status)"))
+            .accessibilityValue(remainingText.map { remainingFresh ? VL("Залишок енергії \($0)", "Remaining energy \($0)") : VL("Останній залишок енергії \($0)", "Last known remaining energy \($0)") } ?? "")
     }
 }
 
@@ -157,15 +185,20 @@ struct VenusStationFascia: View {
     var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = false
+    @State private var cycleStartedAt = Date()
     private var fraction: Double? {
         guard let soc, soc.isFinite, (0...100).contains(soc) else { return nil }
         return soc / 100
     }
-    private var moving: Bool { visible && !reduceMotion && fresh && fraction != nil && (flow == .charging || flow == .supplyingHome) }
+    private var moving: Bool {
+        guard visible, !reduceMotion, fresh, let fraction else { return false }
+        return flow == .charging && fraction < 1 || flow == .supplyingHome && fraction > 0
+    }
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 24, paused: !moving)) { context in
-            let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3) / 3
-            let wave = moving ? fraction.flatMap { VenusWave.position(fraction: $0, state: flow, phase: phase) } : nil
+            let elapsed = max(0, context.date.timeIntervalSince(cycleStartedAt)).truncatingRemainder(dividingBy: 3)
+            let phase = min(1, elapsed / 2.6)
+            let fill = moving ? fraction.flatMap { VenusWave.stripFill(fraction: $0, state: flow, phase: phase) } : nil
             ZStack {
                 Canvas { drawing, size in
                     let top: CGFloat = compact ? 17 : 27
@@ -183,7 +216,7 @@ struct VenusStationFascia: View {
                     drawing.stroke(inner, with: .color(.white.opacity(0.055)), lineWidth: 0.6)
                 }
                 HStack(alignment: .top, spacing: 10) {
-                    if model != .venusA { led("WARN", lit: nil, help: "WARN — попередження станції. Стан індикатора недоступний; пунктир не означає, що попереджень немає.") }
+                    if model != .venusA { led("WARN", lit: nil, help: VL("WARN — попередження станції. Стан індикатора недоступний; пунктир не означає, що попереджень немає.", "WARN — station warning. This indicator is unavailable; a dashed outline does not mean there are no warnings.")) }
                     led("GRID", evidence: .grid(soc: fresh ? soc : nil, gridPowerW: gridPowerW,
                                                 offgridPowerW: offgridPowerW, flow: flow, apiOnline: apiOnline))
                     led("BACKUP", evidence: .backup(soc: fresh ? soc : nil, offgridPowerW: offgridPowerW,
@@ -192,30 +225,34 @@ struct VenusStationFascia: View {
                         GeometryReader { geometry in
                             ZStack(alignment: .leading) {
                                 Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.7)
-                                if let fraction { Capsule().fill(.white.opacity(fresh ? 0.9 : 0.25)).frame(width: geometry.size.width * fraction) }
-                                if let wave {
-                                    Capsule().fill(LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing))
-                                        .frame(width: 18).offset(x: max(0, min(geometry.size.width - 18, geometry.size.width * wave - 9)))
-                                        .shadow(color: .white.opacity(0.55), radius: 3)
+                                if let fraction { Capsule().fill(.white.opacity(fresh ? (moving ? 0.5 : 0.9) : 0.25)).frame(width: geometry.size.width * fraction) }
+                                if let fill, fill.upperBound > fill.lowerBound {
+                                    Capsule().fill(.white)
+                                        .frame(width: geometry.size.width * (fill.upperBound - fill.lowerBound))
+                                        .offset(x: geometry.size.width * fill.lowerBound)
+                                        .shadow(color: .white.opacity(0.4), radius: 2)
                                 }
-                            }
+                            }.frame(width: geometry.size.width, height: 4)
                         }.frame(height: 4)
                         Text("BATTERY").font(.system(size: 7, weight: .medium)).foregroundStyle(.white.opacity(0.55))
                     }.frame(maxWidth: .infinity)
-                        .help("BATTERY — заряд акумулятора: \(VenusVisuals.soc(soc)). Світла смуга показує частку заряду; рух — напрямок заряду або розряду.")
+                        .help(VL("BATTERY — заряд акумулятора: \(VenusVisuals.soc(soc)). Світла смуга показує частку заряду; рух — напрямок заряду або розряду.", "BATTERY — charge: \(VenusVisuals.soc(soc)). The white bar shows charge; movement shows charging or discharging."))
                     if model == .venusA {
                         led("PV", evidence: .pv(powerW: pvPowerW, apiOnline: apiOnline))
                     } else {
-                        led("CT", lit: ctConnected, help: "З’єднання CT за API: \(connectionText(ctConnected)). Фізичний LED не зчитується.")
+                        led("CT", lit: ctConnected, help: VL("З’єднання CT за API: \(connectionText(ctConnected)). Фізичний LED не зчитується.", "CT connection reported by the API: \(connectionText(ctConnected)). The physical LED is not read directly."))
                     }
-                    led("WIFI", lit: wifiIP.map { $0 != "0.0.0.0" }, help: wifiIP.map { "Wi-Fi — станція отримала адресу \($0). З’єднання підтверджене її останньою відповіддю." } ?? "Wi-Fi — очікуємо актуальне підтвердження з’єднання. Пунктир означає відсутність даних.")
+                    led("WIFI", lit: wifiIP.map { $0 != "0.0.0.0" }, help: wifiIP.map { VL("Wi-Fi — станція отримала адресу \($0). З’єднання підтверджене її останньою відповіддю.", "Wi-Fi — the station received address \($0), confirmed in its latest reply.") } ?? VL("Wi-Fi — очікуємо актуальне підтвердження з’єднання. Пунктир означає відсутність даних.", "Wi-Fi — waiting for a current connection report. A dashed outline means no data."))
                     if model != .venusA {
-                        led("BT", lit: bluetoothConnected, help: "Bluetooth за API: \(connectionText(bluetoothConnected)). Фізичний LED не зчитується.")
+                        led("BT", lit: bluetoothConnected, help: VL("Bluetooth за API: \(connectionText(bluetoothConnected)). Фізичний LED не зчитується.", "Bluetooth reported by the API: \(connectionText(bluetoothConnected)). The physical LED is not read directly."))
                     }
                 }.padding(.horizontal, 25).padding(.top, compact ? 19 : 29)
             }
         }.frame(height: compact ? 52 : 72)
             .background(VenusViewActivity(isActive: $visible)).onDisappear { visible = false }
+            .onChange(of: moving) { active in if active { cycleStartedAt = Date() } }
+            .onChange(of: fraction) { _ in cycleStartedAt = Date() }
+            .onChange(of: flow) { _ in cycleStartedAt = Date() }
     }
     private func led(_ title: String, lit: Bool?, help: String) -> some View {
         VStack(spacing: 7) {
@@ -242,5 +279,5 @@ struct VenusStationFascia: View {
         }.frame(width: title == "BACKUP" ? 37 : 28).help(evidence.explanation)
             .accessibilityElement(children: .ignore).accessibilityLabel(evidence.explanation)
     }
-    private func connectionText(_ value: Bool?) -> String { value.map { $0 ? "підключено" : "не підключено" } ?? "невідоме" }
+    private func connectionText(_ value: Bool?) -> String { value.map { $0 ? VL("підключено", "connected") : VL("не підключено", "disconnected") } ?? VL("невідоме", "unknown") }
 }

@@ -2,7 +2,10 @@ import SwiftUI
 
 @MainActor
 struct VenusOnboarding: View {
+    @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject var store: VenusStore
+    var onConnected: () -> Void = {}
+    @State private var selectedLanguage = VenusLanguage.uk
     @State private var step = 0
     @State private var address = ""
     @State private var port = "30000"
@@ -11,11 +14,12 @@ struct VenusOnboarding: View {
     @State private var manualExpanded = false
     @State private var helpShown = false
     @State private var didSearch = false
-    private let stepNames = ["Станція", "Local API", "Пошук"]
+    private var stepNames: [String] { [VL("Станція", "Station"), "Local API", VL("Пошук", "Discovery")] }
 
     var body: some View {
         Group {
-            if helpShown { VenusHelp { helpShown = false } }
+            if !localization.hasChosen { languageChoice }
+            else if helpShown { VenusHelp(height: 430) { helpShown = false } }
             else if imageExpanded { expandedImage }
             else {
                 VStack(alignment: .leading, spacing: 12) {
@@ -35,6 +39,7 @@ struct VenusOnboarding: View {
         .frame(width: 520, height: 430)
         .foregroundStyle(.white).tint(.white)
         .preferredColorScheme(.dark).background(.clear)
+        .environment(\.locale, localization.language.locale)
         .onAppear {
             if let configuration = store.configuration {
                 address = configuration.ip
@@ -43,11 +48,29 @@ struct VenusOnboarding: View {
         }
     }
 
+    private var languageChoice: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Image(systemName: "globe").font(.system(size: 34, weight: .light))
+            Text("Оберіть мову\nChoose your language").font(.system(size: 24, weight: .semibold))
+            Text("Мову можна змінити в налаштуваннях.\nYou can change it later in Settings.")
+                .font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+            Picker("Мова / Language", selection: $selectedLanguage) {
+                Text("Українська").tag(VenusLanguage.uk)
+                Text("English").tag(VenusLanguage.en)
+                Text("Суржик").tag(VenusLanguage.surzhyk)
+            }.pickerStyle(.segmented)
+            Spacer(minLength: 0)
+            Button { localization.choose(selectedLanguage) } label: {
+                Text("Продовжити / Continue").frame(maxWidth: .infinity)
+            }.buttonStyle(VenusButtonStyle(primary: true)).keyboardShortcut(.defaultAction)
+        }.padding(28)
+    }
+
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Підключімо Marstek").font(.system(size: 22, weight: .semibold))
-                Text("Mac і станція мають бути в одній мережі.")
+                Text(VL("Підключімо Marstek", "Connect your Marstek")).font(.system(size: 22, weight: .semibold))
+                Text(VL("Mac і станція мають бути в одній мережі.", "Your Mac and station must be on the same network."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
             }
             Spacer(minLength: 0)
@@ -71,7 +94,7 @@ struct VenusOnboarding: View {
                         .foregroundStyle(index == step ? Color.black : .white.opacity(0.6))
                 }
                 .buttonStyle(VenusButtonStyle(primary: index == step, compact: true))
-                .accessibilityLabel("Крок \(index + 1): \(stepNames[index])")
+                .accessibilityLabel(VL("Крок \(index + 1): \(stepNames[index])", "Step \(index + 1): \(stepNames[index])"))
                 .accessibilityAddTraits(index == step ? .isSelected : [])
             }
         }
@@ -80,18 +103,18 @@ struct VenusOnboarding: View {
     private var instructions: some View {
         HStack(alignment: .center, spacing: 22) {
             VStack(alignment: .leading, spacing: 12) {
-                Text(step == 0 ? "Відкрий станцію" : "Увімкни Local API")
+                Text(step == 0 ? VL("Відкрий станцію", "Open your station") : VL("Увімкни Local API", "Enable Local API"))
                     .font(.system(size: 18, weight: .semibold))
                 Text(step == 0
-                     ? "У застосунку Marstek відкрий свою станцію, потім натисни налаштування у верхньому куті."
-                     : "Знайди Local API й увімкни перемикач. У полі Ports залиш 30000 або вкажи свій порт.")
+                     ? VL("У застосунку Marstek відкрий свою станцію, потім натисни налаштування у верхньому куті.", "Open your station in the Marstek app, then tap Settings in the top corner.")
+                     : VL("Знайди Local API й увімкни перемикач. У полі Ports залиш 30000 або вкажи свій порт.", "Find Local API and turn it on. Keep 30000 in Ports, or enter your own port."))
                     .font(.system(size: 13)).foregroundStyle(.white.opacity(0.76))
                     .fixedSize(horizontal: false, vertical: true)
                 if step == 0 {
-                    Label("Налаштування", systemImage: "gearshape")
+                    Label(VL("Налаштування", "Settings"), systemImage: "gearshape")
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.8))
                 } else {
-                    Text("Розташування пунктів може відрізнятися залежно від версії застосунку.")
+                    Text(VL("Розташування пунктів може відрізнятися залежно від версії застосунку.", "The menu layout may vary between app versions."))
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -103,8 +126,8 @@ struct VenusOnboarding: View {
     private var connection: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Знайдемо станцію самі").font(.system(size: 18, weight: .semibold))
-                Text("Увімкни Local API. Модель визначиться автоматично.")
+                Text(VL("Знайдемо станцію самі", "Let’s find your station")).font(.system(size: 18, weight: .semibold))
+                Text(VL("Увімкни Local API. Модель визначиться автоматично.", "Enable Local API. The model will be detected automatically."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
                 VenusLocalAPIHelpLink(model: store.model)
             }
@@ -113,13 +136,13 @@ struct VenusOnboarding: View {
                     HStack(spacing: 9) {
                         Image(systemName: "magnifyingglass")
                         Text(scanTitle)
-                        if store.isDiscovering { ProgressView().controlSize(.small).tint(.black).accessibilityLabel("Пошук станції") }
+                        if store.isDiscovering { ProgressView().controlSize(.small).tint(.black).accessibilityLabel(VL("Пошук станції", "Finding station")) }
                     }.frame(maxWidth: .infinity)
                 }.buttonStyle(VenusButtonStyle(primary: true)).disabled(busy)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("UDP-порт").font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    Text(VL("UDP-порт", "UDP port")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
                     TextField("30000", text: $port).textFieldStyle(VenusTextFieldStyle()).onSubmit(scan)
-                        .accessibilityLabel("UDP-порт Local API")
+                        .accessibilityLabel(VL("UDP-порт Local API", "Local API UDP port"))
                 }.frame(width: 92)
             }
             if !store.discoveredDevices.isEmpty {
@@ -139,14 +162,14 @@ struct VenusOnboarding: View {
             }
             DisclosureGroup(isExpanded: $manualExpanded) {
                 HStack(spacing: 10) {
-                    TextField("IP-адреса станції", text: $address)
+                    TextField(VL("IP-адреса станції", "Station IP address"), text: $address)
                         .textFieldStyle(VenusTextFieldStyle()).onSubmit(connectManually)
-                    Button("Підключити", action: connectManually)
+                    Button(VL("Підключити", "Connect"), action: connectManually)
                         .buttonStyle(VenusButtonStyle(primary: true))
                         .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
                 }.padding(.top, 8)
             } label: {
-                Text("Ввести IP вручну").font(.system(size: 13, weight: .medium))
+                Text(VL("Ввести IP вручну", "Enter IP manually")).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white.opacity(0.7)).frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                     .contentShape(Rectangle())
             }
@@ -161,19 +184,19 @@ struct VenusOnboarding: View {
     private var footer: some View {
         HStack(spacing: 12) {
             if step == 0 {
-                Button { step = 2 } label: { Text("Уже ввімкнено").frame(minWidth: 128) }
+                Button { step = 2 } label: { Text(VL("Уже ввімкнено", "Already enabled")).frame(minWidth: 128) }
                     .buttonStyle(VenusButtonStyle())
             } else {
-                Button { step -= 1; formMessage = nil } label: { Text("Назад").frame(minWidth: 128) }
+                Button { step -= 1; formMessage = nil } label: { Text(VL("Назад", "Back")).frame(minWidth: 128) }
                     .buttonStyle(VenusButtonStyle())
             }
             Spacer(minLength: 0)
             if step < 2 {
-                Button { step += 1; formMessage = nil } label: { Text("Далі").frame(minWidth: 128) }
+                Button { step += 1; formMessage = nil } label: { Text(VL("Далі", "Next")).frame(minWidth: 128) }
                     .buttonStyle(VenusButtonStyle(primary: true))
                     .keyboardShortcut(.defaultAction)
             } else {
-                Button { helpShown = true } label: { Text("Як користуватися").frame(minWidth: 128) }
+                Button { helpShown = true } label: { Text(VL("Як користуватися", "How to use")).frame(minWidth: 128) }
                     .buttonStyle(VenusButtonStyle())
             }
         }.frame(height: 44)
@@ -188,45 +211,45 @@ struct VenusOnboarding: View {
                         .font(.system(size: 12, weight: .medium)).frame(width: 36, height: 36)
                 }
         }.buttonStyle(.plain)
-            .help("Збільшити схему налаштування")
-            .accessibilityLabel("Збільшити ілюстрацію кроку \(step + 1)")
+            .help(VL("Збільшити схему налаштування", "Enlarge setup diagram"))
+            .accessibilityLabel(VL("Збільшити ілюстрацію кроку \(step + 1)", "Enlarge step \(step + 1) illustration"))
     }
 
     private var expandedImage: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(step == 0 ? "Де відкрити налаштування" : "Увімкнення Local API").font(.system(size: 18, weight: .semibold))
+                Text(step == 0 ? VL("Де відкрити налаштування", "Where to find Settings") : VL("Увімкнення Local API", "Enabling Local API")).font(.system(size: 18, weight: .semibold))
                 Spacer()
-                Button { imageExpanded = false } label: { Text("Назад").frame(minWidth: 128) }
+                Button { imageExpanded = false } label: { Text(VL("Назад", "Back")).frame(minWidth: 128) }
                     .buttonStyle(VenusButtonStyle())
                     .keyboardShortcut(.cancelAction)
             }
             VenusSetupIllustration(step: step).frame(maxWidth: .infinity, maxHeight: .infinity)
-            Text("Схематичний приклад. Розташування пунктів може відрізнятися залежно від версії застосунку Marstek.")
+            Text(VL("Схематичний приклад. Розташування пунктів може відрізнятися залежно від версії застосунку Marstek.", "Schematic example. The menu layout may vary between versions of the Marstek app."))
                 .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
         }.padding(24)
     }
 
     private var busy: Bool { store.isDiscovering || store.isReading || store.commandBusy }
     private var scanTitle: String {
-        if store.isDiscovering { return "Шукаємо станцію…" }
-        if didSearch && store.discoveredDevices.isEmpty && store.error != nil { return "Спробувати ще раз" }
-        return "Шукати автоматично"
+        if store.isDiscovering { return VL("Шукаємо станцію…", "Finding your station…") }
+        if didSearch && store.discoveredDevices.isEmpty && store.error != nil { return VL("Спробувати ще раз", "Try again") }
+        return VL("Шукати автоматично", "Find automatically")
     }
 
     private func scan() {
         guard !busy else { return }
-        guard let value = Self.validPort(port) else { formMessage = "UDP-порт має бути числом від 1024 до 65535."; return }
+        guard let value = Self.validPort(port) else { formMessage = VL("UDP-порт має бути числом від 1024 до 65535.", "UDP port must be a number from 1024 to 65535."); return }
         formMessage = nil; didSearch = true
         store.discover(port: value)
     }
     private func connectManually() {
         guard !busy else { return }
-        guard let value = Self.validPort(port) else { formMessage = "UDP-порт має бути числом від 1024 до 65535."; return }
+        guard let value = Self.validPort(port) else { formMessage = VL("UDP-порт має бути числом від 1024 до 65535.", "UDP port must be a number from 1024 to 65535."); return }
         connect(ip: address, port: value, model: .unknown)
     }
     private func connect(ip: String, port: Int, model: VenusModel) {
-        do { try store.configure(ip: ip, port: port, model: model); formMessage = nil }
+        do { try store.configure(ip: ip, port: port, model: model); formMessage = nil; onConnected() }
         catch { formMessage = error.localizedDescription }
     }
     private static func validPort(_ text: String) -> Int? {
@@ -245,6 +268,7 @@ struct VenusOnboarding: View {
 
 /// An original, deliberately schematic guide; no manufacturer screenshots or assets.
 private struct VenusSetupIllustration: View {
+    @ObservedObject private var localization = VenusLocalization.shared
     let step: Int
 
     var body: some View {
@@ -267,7 +291,7 @@ private struct VenusSetupIllustration: View {
             if step != 0 {
                 Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
             }
-            Text(step == 0 ? "Станція" : "Налаштування")
+            Text(step == 0 ? VL("Станція", "Station") : VL("Налаштування", "Settings"))
                 .font(.system(size: 12, weight: .semibold))
             Spacer(minLength: 0)
             if step == 0 {
@@ -293,7 +317,7 @@ private struct VenusSetupIllustration: View {
                     }
                 }.foregroundStyle(.white.opacity(0.45)).padding(.top, 30)
             }.frame(width: 126, height: 65)
-            Text("Натисни шестерню вгорі")
+            Text(VL("Натисни шестерню вгорі", "Tap the gear at the top"))
                 .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
         }.frame(maxWidth: .infinity)
     }
@@ -310,7 +334,7 @@ private struct VenusSetupIllustration: View {
             }.frame(height: 32)
             Rectangle().fill(.white.opacity(0.09)).frame(height: 0.5).padding(.vertical, 5)
             HStack {
-                Text("Порт").font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+                Text(VL("Порт", "Port")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
                 Spacer()
                 Text("30000").font(.system(size: 12, weight: .medium, design: .monospaced))
             }.frame(height: 28)

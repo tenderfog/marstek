@@ -56,23 +56,23 @@ struct VenusPowerSnapshot {
         var charge: VenusPowerMetric?
         var gridOutput: VenusPowerMetric?
         if let grid = report?.gridPowerW, grid.isFinite, abs(grid) <= 20_000 {
-            let inputMeaning = "Потік у мережевому AC-каналі до станції. Це не чиста потужність заряду батареї: частина енергії може живити резервний вихід, а перетворення має втрати. Напрямок — із профілю E3 або явного калібрування станції."
-            let outputMeaning = "Потік із мережевого AC-виходу станції. Це не споживання всього дому й не доказ розряду батареї: Venus A може передавати сонячну енергію."
+            let inputMeaning = VL("Потік у мережевому AC-каналі до станції. Це не чиста потужність заряду батареї: частина енергії може живити резервний вихід, а перетворення має втрати. Напрямок — із профілю E3 або явного калібрування станції.", "AC grid-channel flow into the station. This is not net battery charging power: some energy may supply the backup output, and conversion has losses. Direction comes from the E3 profile or explicit station calibration.")
+            let outputMeaning = VL("Потік із мережевого AC-виходу станції. Це не споживання всього дому й не доказ розряду батареї: Venus A може передавати сонячну енергію.", "Flow from the station’s grid AC output. This is not whole-home consumption or proof of battery discharge: Venus A may export solar energy.")
             if grid == 0 {
-                charge = metric(0, key: "grid_power_w", title: "Вхід із мережі", meaning: inputMeaning)
-                gridOutput = metric(0, key: "grid_power_w", title: "Вихід у мережу", meaning: outputMeaning)
+                charge = metric(0, key: "grid_power_w", title: VL("Заряд", "Charge"), meaning: inputMeaning)
+                gridOutput = metric(0, key: "grid_power_w", title: VL("Розряд", "Discharge"), meaning: outputMeaning)
             } else if let sign {
                 if (grid < 0 ? -1 : 1) == sign {
-                    charge = metric(abs(grid), key: "grid_power_w", title: "Вхід із мережі", meaning: inputMeaning)
+                    charge = metric(abs(grid), key: "grid_power_w", title: VL("Заряд", "Charge"), meaning: inputMeaning)
                 } else {
-                    gridOutput = metric(abs(grid), key: "grid_power_w", title: "Вихід у мережу", meaning: outputMeaning)
+                    gridOutput = metric(abs(grid), key: "grid_power_w", title: VL("Розряд", "Discharge"), meaning: outputMeaning)
                 }
             }
         }
 
         let backup = report?.offgridPowerW.flatMap {
-            metric($0, key: "offgrid_power_w", title: "Резервний вихід",
-                   meaning: "Навантаження AC-порту BACKUP за API. Це вихід станції, а не чистий розряд батареї та не обов’язково навантаження всього дому. У Venus A джерелом також може бути сонце.")
+            metric($0, key: "offgrid_power_w", title: VL("Розряд", "Discharge"),
+                   meaning: VL("Навантаження AC-порту BACKUP за API. Це вихід станції, а не чистий розряд батареї та не обов’язково навантаження всього дому. У Venus A джерелом також може бути сонце.", "Load on the BACKUP AC port reported by the API. This is station output, not net battery discharge or necessarily the whole-home load. Venus A may also supply it from solar."))
         }
         // Preserve both actual channels; a zero backup reading must not hide a known grid export.
         let output: VenusPowerMetric?
@@ -86,11 +86,11 @@ struct VenusPowerSnapshot {
         let maximumSource: String?
         if maximum == nil { maximumSource = nil }
         else if (usesBackup || output == nil) && configured != nil {
-            maximumSource = "Підтверджений API максимум резервного виходу."
+            maximumSource = VL("Підтверджений API максимум резервного виходу.", "API-confirmed backup output maximum.")
         } else if usesBackup || output == nil {
-            maximumSource = "Номінал резервного виходу E3: 2,5 кВА (2500 Вт за коефіцієнта потужності 1). Це не короткочасний піковий режим; реальна допустима активна потужність залежить від навантаження."
+            maximumSource = VL("Номінал резервного виходу E3: 2,5 кВА (2500 Вт за коефіцієнта потужності 1). Це не короткочасний піковий режим; реальна допустима активна потужність залежить від навантаження.", "E3 rated backup output: 2.5 kVA (2500 W at power factor 1). This is not the short peak rating; the allowed active power depends on the load.")
         } else {
-            maximumSource = "Номінальна мережна AC-потужність E3: 2500 Вт. Фактично встановлений мережевий ліміт може бути нижчим; API його тут не підтвердив."
+            maximumSource = VL("Номінальна мережна AC-потужність E3: 2500 Вт. Фактично встановлений мережевий ліміт може бути нижчим; API його тут не підтвердив.", "E3 rated grid AC power: 2500 W. The configured grid limit may be lower; this API reading does not confirm it.")
         }
         return Self(charge: charge, output: output, backupOutput: backup, gridOutput: gridOutput,
                     backupMaximumW: backupMaximum, outputMaximumW: maximum, maximumSource: maximumSource,
@@ -123,7 +123,7 @@ struct VenusPowerSnapshot {
         let export = make(report: try report(["grid_power_w": 800, "offgrid_power_w": 0]), model: .venusE, now: now)
         try expect(export.outputW == 800 && export.output?.metricKey == "grid_power_w" && export.chargeW == nil, "grid export is not hidden by zero backup")
         let solar = make(report: try report(["grid_power_w": 0, "offgrid_power_w": 800, "pv_power_w": 1000, "battery_power_w": 0]), model: .venusA, now: now)
-        try expect(solar.outputW == 800 && solar.output?.metricKey == "offgrid_power_w" && solar.output?.title == "Резервний вихід", "A solar output is not called battery discharge")
+        try expect(solar.outputW == 800 && solar.output?.metricKey == "offgrid_power_w" && solar.output?.title == VL("Розряд", "Discharge"), "A solar output is not called battery discharge")
         try expect(solar.outputMaximumW == nil && solar.utilization == nil, "unknown A variant has no invented maximum")
         let unknownDirection = make(report: try report(["grid_power_w": -1000, "battery_power_w": -1000]), model: .venusA, now: now)
         try expect(unknownDirection.chargeW == nil && unknownDirection.outputW == nil, "no guessed A grid or battery direction")

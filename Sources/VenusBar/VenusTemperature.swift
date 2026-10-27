@@ -25,30 +25,30 @@ enum VenusTemperature {
     ]
 
     // Chemistry context only. No verified evidence identifies LF280K as a Marstek cell.
-    static let chemistryReferenceExplanation = "Для прикладу LFP-комірки EVE LF280K виробник вказує заряджання 0–55 °C і розряджання −20–55 °C. Модель комірок Marstek не встановлена; ці межі не можна переносити на вашу станцію."
-    private static let scaleExplanation = "Кільце: візуальна шкала 0–60 °C. Пороги уваги VenusBar 45/50/55 °C — не пороги BMS і не гарантія безпечного заряджання. Специфікація E3 з межею 55 °C описує довкілля, а не цей датчик. " + chemistryReferenceExplanation
+    static var chemistryReferenceExplanation: String { VL("Для прикладу LFP-комірки EVE LF280K виробник вказує заряджання 0–55 °C і розряджання −20–55 °C. Модель комірок Marstek не встановлена; ці межі не можна переносити на вашу станцію.", "For the example LFP cell EVE LF280K, its manufacturer specifies charging at 0–55 °C and discharging at −20–55 °C. Marstek’s cell model is unconfirmed; these limits must not be applied to your station.") }
+    private static var scaleExplanation: String { VL("Кільце: візуальна шкала 0–60 °C. Пороги уваги VenusBar 45/50/55 °C — не пороги BMS і не гарантія безпечного заряджання. Специфікація E3 з межею 55 °C описує довкілля, а не цей датчик. ", "Ring: visual scale 0–60 °C. VenusBar attention levels 45/50/55 °C are not BMS thresholds or a guarantee of safe charging. The E3 specification’s 55 °C limit describes ambient conditions, not this sensor. ") + chemistryReferenceExplanation }
 
     static func evaluate(value: Double?, fresh: Bool) -> Result {
         // These are the existing report's numeric sanity bounds, not safe-use limits.
         guard let value, value.isFinite, (-273.15...150).contains(value) else {
-            return Result(level: .unknown, progress: nil, title: "Немає показу температури",
-                          explanation: "Коректний показ температури акумулятора ще не отримано. " + scaleExplanation,
+            return Result(level: .unknown, progress: nil, title: VL("Немає показу температури", "No temperature reading"),
+                          explanation: VL("Коректний показ температури акумулятора ще не отримано. ", "No valid battery temperature reading has been received yet. ") + scaleExplanation,
                           value: nil, isFresh: false)
         }
         let progress = min(1, max(0, value / 60))
         guard fresh else {
-            return Result(level: .unknown, progress: progress, title: "Останній показ",
-                          explanation: "Показ збережений; поточна температура невідома. Сіре кільце зберігає останнє значення без підтвердження його актуальності. " + scaleExplanation,
+            return Result(level: .unknown, progress: progress, title: VL("Останній показ", "Last reading"),
+                          explanation: VL("Показ збережений; поточна температура невідома. Сіре кільце зберігає останнє значення без підтвердження його актуальності. ", "This is a saved reading; current temperature is unknown. The gray ring retains the last value without confirming it is current. ") + scaleExplanation,
                           value: value, isFresh: false)
         }
         let level: Level
         let title: String
-        if value >= 55 { level = .high; title = "Висока температура" }
-        else if value >= 50 { level = .hot; title = "Помітне нагрівання" }
-        else if value >= 45 { level = .warm; title = "Тепліша батарея" }
-        else { level = .normal; title = "Температура акумулятора" }
+        if value >= 55 { level = .high; title = VL("Висока температура", "High temperature") }
+        else if value >= 50 { level = .hot; title = VL("Помітне нагрівання", "Significant warming") }
+        else if value >= 45 { level = .warm; title = VL("Тепліша батарея", "Battery warming") }
+        else { level = .normal; title = VL("Температура акумулятора", "Battery temperature") }
         return Result(level: level, progress: progress, title: title,
-                      explanation: "Температура акумулятора за Bat.GetStatus.bat_temp; це не температура повітря. " + scaleExplanation,
+                      explanation: VL("Температура акумулятора за Bat.GetStatus.bat_temp; це не температура повітря. ", "Battery temperature from Bat.GetStatus.bat_temp; this is not the air temperature. ") + scaleExplanation,
                       value: value, isFresh: true)
     }
 
@@ -70,7 +70,7 @@ enum VenusTemperature {
         }
         for value in [20.0, 55.0, 75.0] {
             let result = evaluate(value: value, fresh: false)
-            try check(result.level == .unknown && !result.isFresh && result.title == "Останній показ" && result.value == value)
+            try check(result.level == .unknown && !result.isFresh && result.title == VL("Останній показ", "Last reading") && result.value == value)
             try check(result.progress == min(1, value / 60))
         }
         try check(evaluate(value: -10, fresh: true).progress == 0)

@@ -12,7 +12,7 @@ private enum VenusOutageValidation {
         let value: String
         if let number = try? container.decode(Int.self) { value = String(number) }
         else { value = try container.decode(String.self) }
-        guard validID(value) else { throw VenusOutagesError.message("YASNO повернув некоректний ідентифікатор адреси.") }
+        guard validID(value) else { throw VenusOutagesError.message(VL("YASNO повернув некоректний ідентифікатор адреси.", "YASNO returned an invalid address identifier.")) }
         return value
     }
 
@@ -24,14 +24,14 @@ private enum VenusOutageValidation {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= 256,
               !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
-            throw VenusOutagesError.message("YASNO повернув некоректну назву адреси.")
+            throw VenusOutagesError.message(VL("YASNO повернув некоректну назву адреси.", "YASNO returned an invalid address name."))
         }
         return trimmed
     }
 
     static func unique<T: Identifiable>(_ values: [T]) throws -> [T] where T.ID == String {
         guard values.count <= 10_000, Set(values.map(\.id)).count == values.count else {
-            throw VenusOutagesError.message("Довідник YASNO містить неоднозначні адреси.")
+            throw VenusOutagesError.message(VL("Довідник YASNO містить неоднозначні адреси.", "The YASNO directory contains ambiguous addresses."))
         }
         return Array(values.prefix(80))
     }
@@ -64,7 +64,7 @@ struct VenusOutageRegion: Codable, Identifiable, Equatable, Sendable {
         name = try VenusOutageValidation.name(container.decode(String.self, forKey: .name))
         hasCities = try container.decode(Bool.self, forKey: .hasCities)
         dsos = try VenusOutageValidation.unique(container.decode([VenusOutageDSO].self, forKey: .dsos))
-        guard !dsos.isEmpty else { throw VenusOutagesError.message("Для цього регіону YASNO не вказав оператора.") }
+        guard !dsos.isEmpty else { throw VenusOutagesError.message(VL("Для цього регіону YASNO не вказав оператора.", "YASNO did not list an operator for this region.")) }
     }
 }
 
@@ -177,11 +177,11 @@ enum VenusOutagePlanState: String, Codable, Sendable {
     case noOutagePlanned, outagePlanned, unknown, emergency, stale
     var label: String {
         switch self {
-        case .noOutagePlanned: return "Відключення не заплановано"
-        case .outagePlanned: return "Планове відключення"
-        case .unknown: return "Графік ще невідомий"
-        case .emergency: return "Аварійні відключення"
-        case .stale: return "Збережений графік: потрібне оновлення"
+        case .noOutagePlanned: return VL("Відключення не заплановано", "No outage planned")
+        case .outagePlanned: return VL("Планове відключення", "Planned outage")
+        case .unknown: return VL("Графік ще невідомий", "Schedule not yet available")
+        case .emergency: return VL("Аварійні відключення", "Emergency outages")
+        case .stale: return VL("Збережений графік: потрібне оновлення", "Saved schedule: update needed")
         }
     }
 }
@@ -248,32 +248,32 @@ struct VenusOutagesReport: Codable, Sendable {
     }
 
     static func decode(_ data: Data, fetchedAt: Date = Date()) throws -> Self {
-        guard data.count <= VenusOutageHTTP.maximumBytes else { throw VenusOutagesError.message("Відповідь YASNO завелика.") }
+        guard data.count <= VenusOutageHTTP.maximumBytes else { throw VenusOutagesError.message(VL("Відповідь YASNO завелика.", "YASNO response is too large.")) }
         let schedules = try JSONDecoder().decode([String: VenusOutageGroupSchedule].self, from: data)
-        guard !schedules.isEmpty, schedules.count <= 500 else { throw VenusOutagesError.message("YASNO ще не опублікував графіки.") }
+        guard !schedules.isEmpty, schedules.count <= 500 else { throw VenusOutagesError.message(VL("YASNO ще не опублікував графіки.", "YASNO has not published schedules yet.")) }
         for (group, schedule) in schedules {
-            guard validGroup(group) else { throw VenusOutagesError.message("Невідомий формат груп YASNO.") }
+            guard validGroup(group) else { throw VenusOutagesError.message(VL("Невідомий формат груп YASNO.", "Unknown YASNO group format.")) }
             if let text = schedule.updatedOn {
                 guard let date = parseTimestamp(text), date <= fetchedAt else {
-                    throw VenusOutagesError.message("Некоректний час оновлення графіка YASNO.")
+                    throw VenusOutagesError.message(VL("Некоректний час оновлення графіка YASNO.", "Invalid YASNO schedule update time."))
                 }
             }
             let days = [schedule.today, schedule.tomorrow].compactMap { $0 }
             for day in days {
-                if let date = day.date, parseTimestamp(date) == nil { throw VenusOutagesError.message("Некоректна дата графіка YASNO.") }
+                if let date = day.date, parseTimestamp(date) == nil { throw VenusOutagesError.message(VL("Некоректна дата графіка YASNO.", "Invalid YASNO schedule date.")) }
                 let slots = day.slots ?? []
-                guard slots.count <= 1440 else { throw VenusOutagesError.message("Забагато інтервалів YASNO.") }
+                guard slots.count <= 1440 else { throw VenusOutagesError.message(VL("Забагато інтервалів YASNO.", "Too many YASNO intervals.")) }
                 var end = 0
                 for slot in slots.sorted(by: { $0.start < $1.start }) {
                     guard slot.start >= end, slot.start < slot.end, slot.end <= 1440 else {
-                        throw VenusOutagesError.message("Некоректні або накладені інтервали YASNO.")
+                        throw VenusOutagesError.message(VL("Некоректні або накладені інтервали YASNO.", "Invalid or overlapping YASNO intervals."))
                     }
                     end = slot.end
                 }
             }
             if let first = schedule.today?.date.flatMap(parseTimestamp),
                let second = schedule.tomorrow?.date.flatMap(parseTimestamp), kyivCalendar.isDate(first, inSameDayAs: second) {
-                throw VenusOutagesError.message("YASNO повернув неоднозначну дату графіка.")
+                throw VenusOutagesError.message(VL("YASNO повернув неоднозначну дату графіка.", "YASNO returned an ambiguous schedule date."))
             }
         }
         return Self(schedules: schedules, fetchedAt: fetchedAt)
@@ -334,6 +334,64 @@ struct VenusOutagesReport: Codable, Sendable {
     }
 }
 
+struct VenusOutageNextChange: Equatable, Sendable {
+    enum Kind: Sendable { case outage, restoration }
+    let time: Date
+    let kind: Kind
+    var isRestoration: Bool { kind == .restoration }
+    var titleShort: String { isRestoration ? VL("Планове ввімкнення", "Planned restoration") : VL("Планове вимкнення", "Planned outage") }
+    var symbol: String { isRestoration ? "bolt.fill" : "bolt.slash" }
+    var timeText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = VenusOutagesReport.kyivCalendar.timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: time)
+    }
+
+    static func make(report: VenusOutagesReport?, group: String?, at now: Date,
+                     serviceHealthy: Bool = true) -> Self? {
+        guard let report, let group, report.day(group: group, at: now)?.status == "ScheduleApplies" else { return nil }
+        let slots = report.intervals(group: group, at: now, serviceHealthy: serviceHealthy)
+        guard slots.first?.start == 0, slots.last?.end == 1440,
+              slots.allSatisfy({ $0.start >= 0 && $0.start < $0.end && $0.end <= 1440 && [.outagePlanned, .noOutagePlanned].contains($0.state) }),
+              zip(slots, slots.dropFirst()).allSatisfy({ $0.end == $1.start }) else { return nil }
+        let minute = VenusOutagesReport.minute(at: now)
+        guard let currentIndex = slots.firstIndex(where: { $0.start <= minute && minute < $0.end }) else { return nil }
+        let current = slots[currentIndex]
+        // Adjacent same-state slots do not represent a power transition.
+        guard let next = slots.dropFirst(currentIndex + 1).first(where: { $0.state != current.state }),
+              let date = VenusOutagesReport.date(on: now, minute: next.start), date > now,
+              let midnight = VenusOutagesReport.date(on: now, minute: 1440), date < midnight else { return nil }
+        return Self(time: date, kind: next.state == .outagePlanned ? .outage : .restoration)
+    }
+}
+
+enum VenusOutageStatusProjection {
+    static func label(report: VenusOutagesReport?, group: String?, at now: Date,
+                      serviceHealthy: Bool = true) -> String {
+        guard let report, let group else { return VenusOutagePlanState.unknown.label }
+        let slots = report.intervals(group: group, at: now, serviceHealthy: serviceHealthy)
+        let minute = VenusOutagesReport.minute(at: now)
+        guard let current = slots.first(where: { $0.start <= minute && minute < $0.end }) else {
+            return VenusOutagePlanState.unknown.label
+        }
+        if let next = VenusOutageNextChange.make(report: report, group: group, at: now, serviceHealthy: serviceHealthy) {
+            return next.isRestoration ? VL("Відключення до \(next.timeText)", "Outage until \(next.timeText)") : VL("Світло до \(next.timeText)", "Power until \(next.timeText)")
+        }
+        guard current.state == .noOutagePlanned else { return current.state.label }
+        let complete = slots.first?.start == 0 && slots.last?.end == 1440
+            && slots.allSatisfy { [.outagePlanned, .noOutagePlanned].contains($0.state) }
+            && zip(slots, slots.dropFirst()).allSatisfy { $0.end == $1.start }
+        guard complete else { return VL("Подальший графік ще невідомий", "The later schedule is not yet known") }
+        guard !slots.contains(where: { $0.state == .outagePlanned && $0.end > minute }) else {
+            return VL("Час наступного відключення не визначено", "The next outage time is unknown")
+        }
+        return slots.contains(where: { $0.state == .outagePlanned })
+            ? VL("До кінця дня без планових відключень", "No more planned outages today") : VL("Сьогодні без планових відключень", "No planned outages today")
+    }
+}
+
 private enum VenusOutageGroupResponse: Decodable {
     case groups([String])
     private enum CodingKeys: String, CodingKey { case group, subgroup }
@@ -341,23 +399,23 @@ private enum VenusOutageGroupResponse: Decodable {
         let container = try decoder.singleValueContainer()
         if let value = try? container.decode(Int.self), value >= 0 { return String(value) }
         let value = try container.decode(String.self)
-        guard VenusOutagesReport.validGroup(value) else { throw VenusOutagesError.message("Невідома група YASNO.") }
+        guard VenusOutagesReport.validGroup(value) else { throw VenusOutagesError.message(VL("Невідома група YASNO.", "Unknown YASNO group.")) }
         return value
     }
     init(from decoder: Decoder) throws {
         if var list = try? decoder.unkeyedContainer() {
             var groups: [String] = []
             while !list.isAtEnd {
-                guard groups.count < 80 else { throw VenusOutagesError.message("Забагато груп для адреси.") }
+                guard groups.count < 80 else { throw VenusOutagesError.message(VL("Забагато груп для адреси.", "Too many groups for this address.")) }
                 let item = try list.decode(Self.self)
                 if case .groups(let values) = item { groups.append(contentsOf: values) }
-                guard groups.count <= 80 else { throw VenusOutagesError.message("Забагато груп для адреси.") }
+                guard groups.count <= 80 else { throw VenusOutagesError.message(VL("Забагато груп для адреси.", "Too many groups for this address.")) }
             }
             self = .groups(Array(Set(groups)).sorted { $0.compare($1, options: .numeric) == .orderedAscending })
         } else if let object = try? decoder.container(keyedBy: CodingKeys.self) {
             let group = try Self.scalar(object.superDecoder(forKey: .group))
             let subgroup = try object.decodeIfPresent(Int.self, forKey: .subgroup) ?? 0
-            guard !group.contains("."), (0...9999).contains(subgroup) else { throw VenusOutagesError.message("Неоднозначна група YASNO.") }
+            guard !group.contains("."), (0...9999).contains(subgroup) else { throw VenusOutagesError.message(VL("Неоднозначна група YASNO.", "Ambiguous YASNO group.")) }
             self = .groups([subgroup == 0 ? group : "\(group).\(subgroup)"])
         } else {
             self = .groups([try Self.scalar(decoder)])
@@ -375,12 +433,12 @@ private enum VenusOutageHTTP {
     static let maximumBytes = 1_048_576
     static let root = "https://app.yasno.ua/api/blackout-service/public/shutdowns/"
     static func url(_ path: String, query: [URLQueryItem] = []) throws -> URL {
-        guard var components = URLComponents(string: root + path) else { throw VenusOutagesError.message("Некоректний запит YASNO.") }
+        guard var components = URLComponents(string: root + path) else { throw VenusOutagesError.message(VL("Некоректний запит YASNO.", "Invalid YASNO request.")) }
         components.queryItems = query.isEmpty ? nil : query
         // URLQueryItem leaves '+' literal; ordinary query parsers interpret it as a space.
         components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         guard let url = components.url, url.scheme == "https", url.host == "app.yasno.ua" else {
-            throw VenusOutagesError.message("Некоректний запит YASNO.")
+            throw VenusOutagesError.message(VL("Некоректний запит YASNO.", "Invalid YASNO request."))
         }
         return url
     }
@@ -397,12 +455,12 @@ private enum VenusOutageHTTP {
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               response.expectedContentLength <= Int64(maximumBytes),
               response.mimeType?.lowercased().contains("json") == true else {
-            throw VenusOutagesError.message("YASNO тимчасово недоступний або вимагає перевірку в браузері.")
+            throw VenusOutagesError.message(VL("YASNO тимчасово недоступний або вимагає перевірку в браузері.", "YASNO is temporarily unavailable or requires browser verification."))
         }
         var data = Data()
         for try await byte in bytes {
             if data.count.isMultiple(of: 4096) { try Task.checkCancellation() }
-            guard data.count < maximumBytes else { throw VenusOutagesError.message("Відповідь YASNO завелика.") }
+            guard data.count < maximumBytes else { throw VenusOutagesError.message(VL("Відповідь YASNO завелика.", "YASNO response is too large.")) }
             data.append(byte)
         }
         try Task.checkCancellation()
@@ -452,11 +510,11 @@ final class VenusOutagesStore: ObservableObject {
             do {
                 let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
                 guard (attributes[.size] as? NSNumber)?.intValue ?? Int.max <= VenusOutageHTTP.maximumBytes else {
-                    throw VenusOutagesError.message("Збережений графік завеликий.")
+                    throw VenusOutagesError.message(VL("Збережений графік завеликий.", "Saved schedule is too large."))
                 }
                 let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
                 let saved = try decoder.decode(Saved.self, from: Data(contentsOf: fileURL))
-                guard saved.schemaVersion == 1, saved.selection.isValid else { throw VenusOutagesError.message("Некоректні збережені налаштування YASNO.") }
+                guard saved.schemaVersion == 1, saved.selection.isValid else { throw VenusOutagesError.message(VL("Некоректні збережені налаштування YASNO.", "Invalid saved YASNO settings.")) }
                 selection = saved.selection
                 selectedRegion = saved.selection.region; selectedDSO = saved.selection.dso; selectedCity = saved.selection.city
                 selectedStreet = saved.selection.street; selectedHouse = saved.selection.house
@@ -466,7 +524,7 @@ final class VenusOutagesStore: ObservableObject {
                     report = try VenusOutagesReport.decode(data, fetchedAt: cached.fetchedAt)
                     usingSavedReport = true
                 }
-            } catch { self.error = "Не вдалося прочитати локальні налаштування YASNO. Обери адресу заново." }
+            } catch { self.error = VL("Не вдалося прочитати локальні налаштування YASNO. Обери адресу заново.", "Could not read local YASNO settings. Select the address again.") }
         }
         if selection != nil { refresh(); startPolling() }
     }
@@ -483,13 +541,18 @@ final class VenusOutagesStore: ObservableObject {
         let minute = VenusOutagesReport.minute(at: Date())
         return todaySlots.first { $0.start <= minute && minute < $0.end }?.state ?? .unknown
     }
-    var statusLabel: String { selection == nil ? "Обери адресу для графіка" : currentPlanState.label }
+    var statusLabel: String {
+        selection == nil ? VL("Обери адресу для графіка", "Select an address for the schedule") : VenusOutageStatusProjection.label(report: report, group: selection?.group, at: Date(), serviceHealthy: !refreshFailed)
+    }
     func nextIntervals(limit: Int = 3) -> [VenusOutageInterval] {
         let minute = VenusOutagesReport.minute(at: Date())
         return Array(todaySlots.filter { $0.end > minute }.prefix(max(0, min(limit, 20))))
     }
     var currentOrNextOutageStart: Date? { currentOrNextOutageDate(end: false) }
     var currentOrNextOutageEnd: Date? { currentOrNextOutageDate(end: true) }
+    func nextChange(at now: Date = Date()) -> VenusOutageNextChange? {
+        VenusOutageNextChange.make(report: report, group: selection?.group, at: now, serviceHealthy: !refreshFailed)
+    }
     private func currentOrNextOutageDate(end: Bool) -> Date? {
         let now = Date()
         guard let selection, let interval = report?.currentOrNextOutage(group: selection.group, at: now, serviceHealthy: !refreshFailed) else { return nil }
@@ -501,7 +564,7 @@ final class VenusOutagesStore: ObservableObject {
         search(debounce: false) { [weak self] in
             let data = try await VenusOutageHTTP.get("addresses/v2/regions")
             let result = try VenusOutageValidation.unique(JSONDecoder().decode([VenusOutageRegion].self, from: data))
-            guard !result.isEmpty else { throw VenusOutagesError.message("YASNO поки не надав підтримуваних регіонів.") }
+            guard !result.isEmpty else { throw VenusOutagesError.message(VL("YASNO поки не надав підтримуваних регіонів.", "YASNO has not provided supported regions yet.")) }
             return { [weak self] in
                 self?.regions = result
                 if let selectedID = self?.selectedRegion?.id, let region = result.first(where: { $0.id == selectedID }) {
@@ -585,7 +648,7 @@ final class VenusOutagesStore: ObservableObject {
         search(debounce: false) { [weak self] in
             let data = try await VenusOutageHTTP.get("addresses/v2/group", query: parameters)
             let groups = try JSONDecoder().decode(VenusOutageGroupResponse.self, from: data).values
-            guard !groups.isEmpty else { throw VenusOutagesError.message("Для цієї адреси YASNO не надав групу.") }
+            guard !groups.isEmpty else { throw VenusOutagesError.message(VL("Для цієї адреси YASNO не надав групу.", "YASNO did not provide a group for this address.")) }
             return { [weak self] in self?.groups = groups }
         }
     }
@@ -614,7 +677,7 @@ final class VenusOutagesStore: ObservableObject {
                 publish(); self.error = nil; self.isSearching = false; self.searchTask = nil
             } catch {
                 guard !Task.isCancelled, let self, self.searchGeneration == generation else { return }
-                self.error = (error as? VenusOutagesError)?.errorDescription ?? "Не вдалося завантажити довідник YASNO. Спробуй пізніше."
+                self.error = (error as? VenusOutagesError)?.errorDescription ?? VL("Не вдалося завантажити довідник YASNO. Спробуй пізніше.", "Could not load the YASNO directory. Try again later.")
                 self.isSearching = false; self.searchTask = nil
             }
         }
@@ -629,12 +692,12 @@ final class VenusOutagesStore: ObservableObject {
                 let result = try VenusOutagesReport.decode(data, fetchedAt: Date())
                 try Task.checkCancellation()
                 guard let self, self.refreshGeneration == generation, self.selection?.cacheKey == key else { return }
-                guard result.schedules[selection.group] != nil else { throw VenusOutagesError.message("У графіку YASNO поки немає обраної групи.") }
+                guard result.schedules[selection.group] != nil else { throw VenusOutagesError.message(VL("У графіку YASNO поки немає обраної групи.", "The selected group is not in the YASNO schedule yet.")) }
                 self.report = result; self.error = nil; self.usingSavedReport = false; self.refreshFailed = false
                 self.isLoading = false; self.refreshTask = nil; self.save()
             } catch {
                 guard !Task.isCancelled, let self, self.refreshGeneration == generation, self.selection?.cacheKey == key else { return }
-                self.error = "Не вдалося оновити YASNO. Збережений графік потребує перевірки."
+                self.error = VL("Не вдалося оновити YASNO. Збережений графік потребує перевірки.", "Could not refresh YASNO. Check the saved schedule.")
                 self.refreshFailed = true
                 self.isLoading = false; self.refreshTask = nil
             }
@@ -657,7 +720,7 @@ final class VenusOutagesStore: ObservableObject {
         selectedRegion = nil; selectedDSO = nil; selectedCity = nil; selectedStreet = nil; selectedHouse = nil; houseHint = nil
         dsos = []; cities = []; streets = []; houses = []; groups = []
         do { if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) { try FileManager.default.removeItem(at: fileURL) } }
-        catch { self.error = "Не вдалося видалити локальну адресу YASNO." }
+        catch { self.error = VL("Не вдалося видалити локальну адресу YASNO.", "Could not remove the local YASNO address.") }
     }
     private func save() {
         guard let selection, let fileURL else { return }
@@ -668,18 +731,18 @@ final class VenusOutagesStore: ObservableObject {
             }
             let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(Saved(schemaVersion: 1, selection: selection, report: report))
-            guard data.count <= VenusOutageHTTP.maximumBytes else { throw VenusOutagesError.message("Збережений графік завеликий.") }
+            guard data.count <= VenusOutageHTTP.maximumBytes else { throw VenusOutagesError.message(VL("Збережений графік завеликий.", "Saved schedule is too large.")) }
             // A private staging file is atomically renamed; no transient world-readable address file.
             let temporary = directory.appendingPathComponent(".outages-\(UUID().uuidString).json")
             guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-                throw VenusOutagesError.message("Не вдалося зберегти адресу локально.")
+                throw VenusOutagesError.message(VL("Не вдалося зберегти адресу локально.", "Could not save the address locally."))
             }
             defer { try? FileManager.default.removeItem(at: temporary) }
             if FileManager.default.fileExists(atPath: fileURL.path) {
                 _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: temporary, options: .usingNewMetadataOnly)
             } else { try FileManager.default.moveItem(at: temporary, to: fileURL) }
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch { self.error = "Не вдалося зберегти адресу та графік локально." }
+        } catch { self.error = VL("Не вдалося зберегти адресу та графік локально.", "Could not save the address and schedule locally.") }
     }
 }
 
@@ -697,10 +760,37 @@ extension VenusOutagesReport {
         let now = parseTimestamp("2026-10-27T08:00:00Z")!
         let fixture = #"{"17.2":{"today":{"slots":[{"start":0,"end":600,"type":"NotPlanned"},{"start":600,"end":750,"type":"Definite"},{"start":750,"end":1440,"type":"NotPlanned"}],"date":"2026-10-27T00:00:00+02:00","status":"ScheduleApplies"},"tomorrow":{"slots":[],"date":"2026-10-28T00:00:00+02:00","status":"WaitingForSchedule"},"updatedOn":"2026-10-27T07:30:00Z"}}"#
         let report = try decode(Data(fixture.utf8), fetchedAt: now)
+        let eveningFixture = fixture.replacingOccurrences(of: "600", with: "1110").replacingOccurrences(of: "750", with: "1320")
+        let evening = parseTimestamp("2026-10-27T16:05:00Z")!
+        let eveningReport = try decode(Data(eveningFixture.utf8), fetchedAt: evening)
+        try check(VenusOutageStatusProjection.label(report: eveningReport, group: "17.2", at: evening) == VL("Світло до 18:30", "Power until 18:30"), "current on interval names upcoming outage, not an all-day claim")
+        let eveningOff = parseTimestamp("2026-10-27T16:45:00Z")!
+        let eveningOffReport = Self(schedules: eveningReport.schedules, fetchedAt: eveningOff)
+        try check(VenusOutageStatusProjection.label(report: eveningOffReport, group: "17.2", at: eveningOff) == VL("Відключення до 22:00", "Outage until 22:00"), "current outage names restoration")
+        let clearReport = try decode(Data(fixture.replacingOccurrences(of: "Definite", with: "NotPlanned").utf8), fetchedAt: now)
+        try check(VenusOutageStatusProjection.label(report: clearReport, group: "17.2", at: now) == VL("Сьогодні без планових відключень", "No planned outages today"), "all-day statement requires complete no-outage day")
+        let afterOutage = parseTimestamp("2026-10-27T11:00:00Z")!
+        let afterReport = Self(schedules: report.schedules, fetchedAt: afterOutage)
+        try check(VenusOutageStatusProjection.label(report: afterReport, group: "17.2", at: afterOutage) == VL("До кінця дня без планових відключень", "No more planned outages today"), "earlier outage does not become a no-outage day")
+        try check(VenusOutageStatusProjection.label(report: report, group: "17.2", at: now.addingTimeInterval(1801)) == VenusOutagePlanState.stale.label, "stale status copy preserved")
         let slots = report.intervals(group: "17.2", at: now)
         try check(slots.count == 3 && slots[1].timeRange == "10:00–12:30", "half-hour boundary")
         try check(slots[2].timeRange == "12:30–24:00", "24:00 end")
         try check(report.currentOrNextOutage(group: "17.2", at: now)?.start == 600, "current planned outage")
+        let restoration = VenusOutageNextChange.make(report: report, group: "17.2", at: now)
+        try check(restoration?.isRestoration == true && restoration?.timeText == "12:30" && restoration!.time > now, "current outage projects its future restoration in Kyiv time")
+        let beforeOutage = now.addingTimeInterval(-1800)
+        let beforeReport = Self(schedules: report.schedules, fetchedAt: beforeOutage)
+        let outage = VenusOutageNextChange.make(report: beforeReport, group: "17.2", at: beforeOutage)
+        try check(outage?.kind == .outage && outage?.timeText == "10:00", "current planned-on interval projects next outage")
+        try check(VenusOutageNextChange.make(report: report, group: "17.2", at: now.addingTimeInterval(1801)) == nil, "stale plan has no next change")
+        try check(VenusOutageNextChange.make(report: report, group: "17.2", at: now, serviceHealthy: false) == nil, "failed source has no next change")
+        let adjacentJSON = fixture.replacingOccurrences(of: #"{"start":600,"end":750,"type":"Definite"}"#, with: #"{"start":600,"end":660,"type":"Definite"},{"start":660,"end":750,"type":"Definite"}"#)
+        let adjacent = try decode(Data(adjacentJSON.utf8), fetchedAt: now)
+        try check(VenusOutageNextChange.make(report: adjacent, group: "17.2", at: now)?.timeText == "12:30", "same-state boundary is not restoration")
+        let midnightJSON = fixture.replacingOccurrences(of: #"{"start":600,"end":750,"type":"Definite"},{"start":750,"end":1440,"type":"NotPlanned"}"#, with: #"{"start":600,"end":1440,"type":"Definite"}"#)
+        let throughMidnight = try decode(Data(midnightJSON.utf8), fetchedAt: now)
+        try check(VenusOutageNextChange.make(report: throughMidnight, group: "17.2", at: now) == nil, "midnight ending cannot predict unknown next-day restoration")
         try check(report.isFresh(at: now.addingTimeInterval(1800)), "fresh boundary")
         try check(!report.isFresh(at: now.addingTimeInterval(1800.001)), "old cache")
         try check(!report.isFresh(at: now.addingTimeInterval(-1)), "future cache")
@@ -717,11 +807,13 @@ extension VenusOutagesReport {
             try rejects({ _ = try decode(Data(invalid.utf8), fetchedAt: now) }, "invalid schedule")
         }
         let unknown = try decode(Data(fixture.replacingOccurrences(of: "Definite", with: "FutureType").utf8), fetchedAt: now)
+        try check(VenusOutageNextChange.make(report: unknown, group: "17.2", at: now) == nil, "unknown interval has no next change")
         try check(unknown.intervals(group: "17.2", at: now)[1].state == .unknown, "unknown slot type")
         let gap = try decode(Data(fixture.replacingOccurrences(of: "\"start\":600", with: "\"start\":630").utf8), fetchedAt: now)
         try check(gap.intervals(group: "17.2", at: now).contains(where: { $0.start == 600 && $0.end == 630 && $0.state == .unknown }), "gap is unknown")
         try check(gap.currentOrNextOutage(group: "17.2", at: now) == nil, "incomplete plan forecast")
         let emergency = try decode(Data(fixture.replacingOccurrences(of: "ScheduleApplies", with: "EmergencyShutdowns").utf8), fetchedAt: now)
+        try check(VenusOutageNextChange.make(report: emergency, group: "17.2", at: now) == nil, "emergency has no next change")
         try check(emergency.intervals(group: "17.2", at: now).first?.state == .emergency, "emergency overrides slots")
         try check(emergency.currentOrNextOutage(group: "17.2", at: now) == nil, "no emergency forecast")
         let tomorrow = parseTimestamp("2026-10-27T22:10:00Z")!

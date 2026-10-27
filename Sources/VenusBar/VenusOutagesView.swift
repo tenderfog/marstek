@@ -2,6 +2,7 @@ import SwiftUI
 
 @MainActor
 struct VenusMiniOutageTimeline: View {
+    @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject var store: VenusOutagesStore
 
     var body: some View {
@@ -19,21 +20,21 @@ struct VenusMiniOutageTimeline: View {
     private var setup: some View {
         HStack(spacing: 7) {
             Image(systemName: "bolt.slash").font(.system(size: 11, weight: .medium))
-            Text("Графік відключень").font(.system(size: 11, weight: .medium))
+            Text(VL("Графік відключень", "Outage schedule")).font(.system(size: 11, weight: .medium))
             Spacer(minLength: 4)
-            Text("Додати адресу").font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
+            Text(VL("Додати адресу", "Add address")).font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
         }.foregroundStyle(.white.opacity(0.7))
     }
 
     private func configured(at now: Date) -> some View {
         VStack(spacing: 5) {
             HStack(spacing: 6) {
-                Text("За графіком · \(planSummary(at: now))")
+                Text(planSummary(at: now))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(VenusOutageStyle.color(store.currentPlanState))
                     .lineLimit(1).minimumScaleFactor(0.85)
                 Spacer(minLength: 0)
-                Text("Зараз \(clock(now))").font(.system(size: 9, weight: .medium)).monospacedDigit()
+                Text(VL("Зараз \(clock(now))", "Now \(clock(now))")).font(.system(size: 9, weight: .medium)).monospacedDigit()
                     .foregroundStyle(.white.opacity(0.75))
             }.frame(height: 16)
             VStack(spacing: 2) {
@@ -78,11 +79,11 @@ struct VenusMiniOutageTimeline: View {
         let minute = VenusOutagesReport.minute(at: now)
         let end = store.todaySlots.first { $0.start <= minute && minute < $0.end }.map { VenusOutageInterval.time($0.end) }
         switch store.currentPlanState {
-        case .noOutagePlanned: return end.map { "без відключень до \($0)" } ?? "без відключень"
-        case .outagePlanned: return end.map { "відключення до \($0)" } ?? "планове відключення"
-        case .emergency: return "аварійні відключення"
-        case .stale: return "потрібне оновлення"
-        case .unknown: return store.isLoading ? "оновлюємо дані" : "ще немає даних"
+        case .noOutagePlanned: return end.map { VL("Світло до \($0)", "Power until \($0)") } ?? VL("Світло за графіком", "Power scheduled")
+        case .outagePlanned: return end.map { VL("Без світла до \($0)", "Outage until \($0)") } ?? VL("Планове відключення", "Scheduled outage")
+        case .emergency: return VL("аварійні відключення", "emergency outages")
+        case .stale: return VL("потрібне оновлення", "update needed")
+        case .unknown: return store.isLoading ? VL("оновлюємо дані", "updating") : VL("ще немає даних", "no data yet")
         }
     }
 
@@ -95,77 +96,92 @@ struct VenusMiniOutageTimeline: View {
     }
 
     private func accessibilityText(at now: Date) -> String {
-        guard store.selection != nil else { return "Графік відключень не налаштований. Додай адресу в головній панелі." }
-        return "Графік на сьогодні, київський час. Зараз \(clock(now)). \(store.statusLabel). \(store.isCached ? "Збережений графік. " : "")Біла позначка показує поточний час. Це план оператора, не фактична наявність електрики."
+        guard store.selection != nil else { return VL("Графік відключень не налаштований. Додай адресу в головній панелі.", "No outage schedule configured. Add an address in the main panel.") }
+        return VL("Графік на сьогодні, київський час. Зараз \(clock(now)). \(store.statusLabel). \(store.isCached ? "Збережений графік. " : "")Біла позначка показує поточний час. Це план оператора, не фактична наявність електрики.", "Today’s schedule, Kyiv time. Now \(clock(now)). \(store.statusLabel). \(store.isCached ? "Saved schedule. " : "")The white marker shows the current time. This is the operator’s plan, not actual power availability.")
     }
 }
 
 @MainActor
 struct VenusTodayOutageCard: View {
+    @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject var store: VenusOutagesStore
     let onOpen: () -> Void
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { _ in
-            Button(action: onOpen) { content }
-                .buttonStyle(.plain)
-                .padding(11).frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
-                .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 17))
+        if store.selection != nil {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Button(action: onOpen) { content(at: context.date) }
+                    .buttonStyle(.plain)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, minHeight: 124, maxHeight: 124, alignment: .leading)
+                    .background(cardColor, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 19))
+                    .help(VL("План оператора за київським часом. Натисни, щоб відкрити повний графік.", "The operator’s plan in Kyiv time. Click to open the full schedule."))
+            }
         }
     }
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 7) {
-                Image(systemName: "bolt.slash").font(.system(size: 12, weight: .medium))
-                Text("Сьогодні").font(.system(size: 13, weight: .semibold))
-                if let selection = store.selection {
-                    Text("· \(selection.group)").font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+    private func content(at now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(headline(at: now)).font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.85)
+                    Spacer(minLength: 2)
+                    Text(VL("За графіком", "Scheduled")).font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.65)).lineLimit(1)
                 }
-                Spacer(minLength: 4)
-                Text(store.statusLabel)
-                    .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                    .foregroundStyle(VenusOutageStyle.color(store.currentPlanState))
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.white.opacity(0.35))
-            }.foregroundStyle(.white.opacity(0.85))
-            if store.selection == nil {
-                Text("Налаштувати графік для своєї адреси")
-                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
-            } else {
-                intervals
+                Text(store.selection?.addressLabel ?? "").font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.tail)
             }
+            intervals(at: now)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private var intervals: some View {
-        if store.report == nil {
-            Text(store.error ?? "Часові інтервали з’являться після відповіді оператора")
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
-        } else if store.currentPlanState == .emergency {
-            Text("Екстрені відключення: погодинний план може не діяти.")
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
+    @ViewBuilder private func intervals(at now: Date) -> some View {
+        if store.currentPlanState == .emergency {
+            Text(VL("Екстрені відключення: погодинний план може не діяти.", "Emergency outages: the hourly plan may not apply."))
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(2)
         } else if !store.nextIntervals(limit: 3).isEmpty {
-            HStack(spacing: 7) {
+            HStack(spacing: 10) {
                 ForEach(store.nextIntervals(limit: 3)) { interval in
                     let state = displayState(interval.state)
-                    HStack(spacing: 4) {
-                        Image(systemName: VenusOutageStyle.symbol(state)).font(.system(size: 8, weight: .semibold))
-                        Text(interval.timeRange).monospacedDigit()
-                    }
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(VenusOutageStyle.color(state))
-                    .padding(.horizontal, 7).padding(.vertical, 4)
-                    .background(VenusOutageStyle.color(state).opacity(0.09), in: Capsule())
-                    .help("\(interval.timeRange) · \(interval.state.label). За графіком, не фактична наявність живлення.")
+                    let minute = VenusOutagesReport.minute(at: now)
+                    let current = interval.start <= minute && minute < interval.end
+                    VStack(spacing: 5) {
+                        Capsule().fill(state == .noOutagePlanned ? Color.white : pillNavy)
+                            .overlay {
+                                Image(systemName: state == .noOutagePlanned ? "bolt.fill" : VenusOutageStyle.symbol(state))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(state == .noOutagePlanned ? supplyGreen : Color.white.opacity(0.9))
+                            }
+                            .overlay { Capsule().stroke(.white.opacity(current ? 0.95 : 0), lineWidth: 1.2) }
+                            .frame(height: 22)
+                        Text(interval.timeRange).font(.system(size: 12, weight: current ? .semibold : .regular))
+                            .monospacedDigit().foregroundStyle(.white.opacity(current ? 1 : 0.75))
+                            .lineLimit(1).minimumScaleFactor(0.85)
+                    }.frame(maxWidth: .infinity)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(current ? VL("Зараз. ", "Now. ") : "")\(interval.timeRange). \(state.label)")
                 }
-                Spacer(minLength: 0)
             }
-        } else if let error = store.error {
-            Text(error).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
         } else {
-            Text("Точні інтервали ще недоступні")
-                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
+            Text(store.error ?? (store.isLoading ? VL("Оновлюємо графік…", "Updating schedule…") : VL("Точні інтервали ще недоступні", "Exact intervals are not available yet")))
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(2)
+        }
+    }
+
+    private let supplyGreen = Color(red: 0.12, green: 0.43, blue: 0.28)
+    private let pillNavy = Color(red: 0.08, green: 0.14, blue: 0.26)
+    private var cardColor: Color { store.currentPlanState == .noOutagePlanned ? supplyGreen : Color(red: 0.04, green: 0.085, blue: 0.18) }
+
+    private func headline(at now: Date) -> String {
+        let minute = VenusOutagesReport.minute(at: now)
+        let end = store.todaySlots.first(where: { $0.start <= minute && minute < $0.end }).map { VenusOutageInterval.time($0.end) }
+        switch store.currentPlanState {
+        case .noOutagePlanned: return end.map { VL("Світло до \($0)", "Power until \($0)") } ?? VL("Світло є", "Power scheduled")
+        case .outagePlanned: return end.map { VL("Немає світла до \($0)", "No power until \($0)") } ?? VL("Немає світла", "Scheduled outage")
+        case .unknown, .stale, .emergency: return store.statusLabel
         }
     }
 
@@ -179,6 +195,7 @@ struct VenusTodayOutageCard: View {
 
 @MainActor
 struct VenusOutagesSettings: View {
+    @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject var store: VenusOutagesStore
     let onBack: () -> Void
     @State private var cityQuery = ""
@@ -188,11 +205,11 @@ struct VenusOutagesSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
-                Button(action: onBack) { Label("Назад", systemImage: "chevron.left") }
+                Button(action: onBack) { Label(VL("Назад", "Back"), systemImage: "chevron.left") }
                     .buttonStyle(VenusButtonStyle())
-                Text("Графіки відключень").font(.system(size: 17, weight: .semibold))
+                Text(VL("Графіки відключень", "Outage schedules")).font(.system(size: 17, weight: .semibold))
                 Spacer(minLength: 0)
-            }
+            }.frame(height: 44)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if store.selection != nil { savedSchedule }
@@ -202,18 +219,18 @@ struct VenusOutagesSettings: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if store.isLoading || store.isSearching {
-                        Text(store.isSearching ? "Шукаємо в офіційному переліку…" : "Оновлюємо графік…")
+                        Text(store.isSearching ? VL("Шукаємо в офіційному переліку…", "Searching the official directory…") : VL("Оновлюємо графік…", "Updating schedule…"))
                             .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
                     }
                     HStack(spacing: 7) {
-                        Link("Джерело ↗", destination: store.sourceURL)
-                        Text("План оператора, не фактичне живлення.")
+                        Link(VL("Джерело ↗", "Source ↗"), destination: store.sourceURL)
+                        Text(VL("План оператора, не фактичне живлення.", "The operator’s plan, not actual power availability."))
                             .foregroundStyle(.white.opacity(0.45))
                     }.font(.system(size: 10))
                 }.padding(.vertical, 2).padding(.trailing, 3)
             }.scrollIndicators(.automatic)
         }
-        .padding(22).frame(width: 520, height: 610)
+        .padding(24).frame(width: 520, height: 610, alignment: .topLeading)
         .foregroundStyle(.white).background(.clear).preferredColorScheme(.dark)
         .onAppear {
             store.loadRegions()
@@ -226,16 +243,16 @@ struct VenusOutagesSettings: View {
     private var addressForm: some View {
         VStack(alignment: .leading, spacing: 14) {
             if store.selection != nil {
-                Button("Змінити адресу") {
+                Button(VL("Змінити адресу", "Change address")) {
                     store.clearSelection(); cityQuery = ""; streetQuery = ""; houseQuery = ""
                 }.buttonStyle(VenusButtonStyle())
             } else {
-                Text("Адреса для графіка").font(.system(size: 15, weight: .semibold))
-                Text("Обери місто й оператора, потім введи вулицю та будинок.")
+                Text(VL("Адреса для графіка", "Schedule address")).font(.system(size: 15, weight: .semibold))
+                Text(VL("Обери місто й оператора, потім введи вулицю та будинок.", "Choose a region and operator, then enter the street and building."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
                 regionMenu
                 if store.regions.isEmpty && !store.isSearching {
-                    Button("Спробувати ще раз", action: store.loadRegions).buttonStyle(VenusButtonStyle())
+                    Button(VL("Спробувати ще раз", "Try again"), action: store.loadRegions).buttonStyle(VenusButtonStyle())
                 }
                 if store.selectedRegion != nil { dsoMenu }
                 if store.selectedDSO != nil {
@@ -254,7 +271,7 @@ struct VenusOutagesSettings: View {
                     store.selectRegion(region); cityQuery = ""; streetQuery = ""; houseQuery = ""
                 }
             }
-        } label: { selectionLabel(store.selectedRegion?.name ?? "Обрати область") }
+        } label: { selectionLabel(store.selectedRegion?.name ?? VL("Обрати область", "Choose region")) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).disabled(store.regions.isEmpty)
     }
 
@@ -265,13 +282,13 @@ struct VenusOutagesSettings: View {
                     store.selectDSO(dso); cityQuery = ""; streetQuery = ""; houseQuery = ""
                 }
             }
-        } label: { selectionLabel(store.selectedDSO?.name ?? "Обрати оператора") }
+        } label: { selectionLabel(store.selectedDSO?.name ?? VL("Обрати оператора", "Choose operator")) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).disabled(store.dsos.isEmpty)
     }
 
     private var citySearch: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Місто", text: $cityQuery).textFieldStyle(VenusTextFieldStyle())
+            TextField(VL("Місто", "City"), text: $cityQuery).textFieldStyle(VenusTextFieldStyle())
                 .onChange(of: cityQuery) { query in
                     if query != store.selectedCity?.name { store.searchCities(query) }
                 }
@@ -289,9 +306,9 @@ struct VenusOutagesSettings: View {
     private var addressSearch: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Вулиця").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                Text(VL("Вулиця", "Street")).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.6))
                 HStack(spacing: 5) {
-                    TextField("Назва вулиці", text: $streetQuery)
+                    TextField(VL("Назва вулиці", "Street name"), text: $streetQuery)
                         .textFieldStyle(VenusTextFieldStyle())
                         .onChange(of: streetQuery) { query in
                             if query != store.selectedStreet?.name {
@@ -304,7 +321,7 @@ struct VenusOutagesSettings: View {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 15)).foregroundStyle(.white.opacity(0.5))
                                 .frame(width: 28, height: 44)
-                        }.buttonStyle(.plain).accessibilityLabel("Очистити вулицю")
+                        }.buttonStyle(.plain).accessibilityLabel(VL("Очистити вулицю", "Clear street"))
                     }
                 }
                 if store.selectedStreet == nil && !store.streets.isEmpty {
@@ -314,8 +331,8 @@ struct VenusOutagesSettings: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .topLeading)
             VStack(alignment: .leading, spacing: 7) {
-                Text("Будинок").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.6))
-                TextField("№", text: $houseQuery)
+                Text(VL("Будинок", "Building")).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                TextField(VL("№", "No."), text: $houseQuery)
                     .textFieldStyle(VenusTextFieldStyle())
                     .disabled(store.selectedStreet == nil)
                     .opacity(store.selectedStreet == nil ? 0.45 : 1)
@@ -353,10 +370,10 @@ struct VenusOutagesSettings: View {
 
     private var groupSelection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Підтвердь групу").font(.system(size: 14, weight: .semibold))
+            Text(VL("Підтвердь групу", "Confirm group")).font(.system(size: 14, weight: .semibold))
             ForEach(store.groups, id: \.self) { group in
                 Button { store.selectGroup(group) } label: {
-                    HStack { Text("Зберегти групу \(group)"); Spacer(); Image(systemName: "checkmark") }
+                    HStack { Text(VL("Зберегти групу \(group)", "Save group \(group)")); Spacer(); Image(systemName: "checkmark") }
                         .frame(maxWidth: .infinity)
                 }.buttonStyle(VenusButtonStyle(primary: true)).disabled(store.isLoading)
             }
@@ -368,24 +385,24 @@ struct VenusOutagesSettings: View {
             if let selection = store.selection {
                 Text(selection.addressLabel).font(.system(size: 14, weight: .medium))
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Група \(selection.group)").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                Text(VL("Група \(selection.group)", "Group \(selection.group)")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
             }
             HStack {
                 Text(store.statusLabel).font(.system(size: 13, weight: .medium))
                     .foregroundStyle(VenusOutageStyle.color(store.currentPlanState))
                 Spacer()
-                Button("Оновити", action: store.refresh).buttonStyle(VenusButtonStyle()).disabled(store.isLoading)
+                Button(VL("Оновити", "Refresh"), action: store.refresh).buttonStyle(VenusButtonStyle()).disabled(store.isLoading)
             }
             if let fetched = store.fetchedAt {
-                Text("\(store.isCached ? "Останній графік" : "Отримано") · \(fetched.formatted(date: .abbreviated, time: .shortened))")
+                Text("\(store.isCached ? VL("Останній графік", "Last schedule") : VL("Отримано", "Received")) · \(fetched.formatted(.dateTime.day().month(.abbreviated).hour().minute().locale(localization.language.locale)))")
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
             }
             if store.currentPlanState == .emergency {
-                Text("Під час екстрених відключень наведений погодинний графік може не діяти.")
+                Text(VL("Під час екстрених відключень наведений погодинний графік може не діяти.", "During emergency outages, the hourly schedule may not apply."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
             }
             if store.report != nil && !store.todaySlots.isEmpty {
-                Text("Сьогодні · за київським часом").font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.55))
+                Text(VL("Сьогодні · за київським часом", "Today · Kyiv time")).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.55))
                 ForEach(store.todaySlots) { interval in
                     HStack(spacing: 10) {
                         Text(interval.timeRange).monospacedDigit().frame(width: 110, alignment: .leading)
@@ -413,7 +430,7 @@ struct VenusOutagesSettings: View {
     }
 
     private func selectionSummary(_ title: String) -> some View {
-        Label("Обрано: \(title)", systemImage: "checkmark")
+        Label(VL("Обрано: \(title)", "Selected: \(title)"), systemImage: "checkmark")
             .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55))
             .fixedSize(horizontal: false, vertical: true)
     }

@@ -70,20 +70,20 @@ final class VenusEnergyStore: ObservableObject {
         do {
             guard FileManager.default.fileExists(atPath: path.path) else { return }
             let size = try path.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size <= 20_000_000 else { throw VenusStoreError.message("Історія перевищує допустимий розмір.") }
+            guard size <= 20_000_000 else { throw VenusStoreError.message(VL("Історія перевищує допустимий розмір.", "History exceeds the size limit.")) }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .secondsSince1970
             let archive = try decoder.decode(VenusEnergyArchive.self, from: Data(contentsOf: path))
             guard archive.schemaVersion == 1, archive.reservePercent.isFinite, (0...100).contains(archive.reservePercent) else {
-                throw VenusStoreError.message("Некоректний формат історії.")
+                throw VenusStoreError.message(VL("Некоректний формат історії.", "Invalid history format."))
             }
-            guard archive.device != nil || archive.frames.isEmpty else { throw VenusStoreError.message("Історія не містить станції.") }
+            guard archive.device != nil || archive.frames.isEmpty else { throw VenusStoreError.message(VL("Історія не містить станції.", "History has no station identity.")) }
             reservePercent = archive.reservePercent
             device = archive.device
             frames = Self.pruned(archive.frames, now: Date())
             rebuildIndex()
         } catch {
-            persistenceError = "Не вдалося прочитати локальну історію."
+            persistenceError = VL("Не вдалося прочитати локальну історію.", "Could not read local history.")
         }
     }
 
@@ -131,21 +131,52 @@ final class VenusEnergyStore: ObservableObject {
 
     func stop() { save(force: true, wait: true) }
 
-    func series(hours: Int, now: Date = Date()) -> [VenusEnergySeries] {
+    func series(hours: Int, chargingGridSign: Int? = nil, now: Date = Date()) -> [VenusEnergySeries] {
         let hours = [1, 3, 5, 24].contains(hours) ? hours : 1
         let start = now.addingTimeInterval(-Double(hours) * 3600)
         func points(_ key: String) -> [VenusEnergyPoint] {
             samples(key).filter { $0.date >= start && $0.date <= now }.map { VenusEnergyPoint(date: $0.date, value: $0.value) }
         }
-        let battery = points("battery_power_w")
-        let primaryKey = battery.isEmpty ? "grid_power_w" : "battery_power_w"
-        let primary = battery.isEmpty ? points(primaryKey) : battery
+        let grid = points("grid_power_w")
+        let sign = chargingGridSign.flatMap { [-1, 1].contains($0) ? $0 : nil }
+            ?? (VenusModel.identify(device?.name) == .venusE ? -1 : nil)
         var result: [VenusEnergySeries] = []
-        if !primary.isEmpty {
-            result.append(VenusEnergySeries(id: primaryKey, title: primaryKey == "battery_power_w" ? "Батарея" : "Мережа", segments: Self.segments(primary)))
+        var gridOutput: [VenusEnergyPoint] = []
+        if !grid.isEmpty, let sign {
+            let input = grid.map { VenusEnergyPoint(date: $0.date, value: max(0, $0.value * Double(sign))) }
+            let output = grid.map { VenusEnergyPoint(date: $0.date, value: max(0, -$0.value * Double(sign))) }
+            // This is an AC-channel projection, never net battery charge/discharge.
+            // Keep real zero samples around a pulse; omit only an entirely inactive opposite channel.
+            if input.contains(where: { $0.value > 0 }) || !output.contains(where: { $0.value > 0 }) {
+                result.append(VenusEnergySeries(id: "grid_input_w", title: VL("Заряд", "Charge"), segments: Self.segments(input)))
+            }
+            if output.contains(where: { $0.value > 0 }) {
+                gridOutput = output
+            }
         }
-        let backup = points("offgrid_power_w")
-        if !backup.isEmpty { result.append(VenusEnergySeries(id: "offgrid_power_w", title: "Навантаження", segments: Self.segments(backup))) }
+        let backup = points("offgrid_power_w").filter { $0.value >= 0 }
+        let discharge = Self.dischargePoints(grid: gridOutput, backup: backup)
+        if !discharge.isEmpty { result.append(VenusEnergySeries(id: "output_w", title: VL("Розряд", "Discharge"), segments: Self.segments(discharge))) }
+        return result
+    }
+
+    private nonisolated static func dischargePoints(grid: [VenusEnergyPoint], backup: [VenusEnergyPoint]) -> [VenusEnergyPoint] {
+        let dates = Set((grid + backup).map(\.date)).sorted()
+        var gridIndex = 0, backupIndex = 0
+        var latestGrid: VenusEnergyPoint?, latestBackup: VenusEnergyPoint?
+        var result: [VenusEnergyPoint] = []
+        for date in dates {
+            while gridIndex < grid.count, grid[gridIndex].date <= date { latestGrid = grid[gridIndex]; gridIndex += 1 }
+            while backupIndex < backup.count, backup[backupIndex].date <= date { latestBackup = backup[backupIndex]; backupIndex += 1 }
+            let currentGrid = latestGrid.flatMap { date.timeIntervalSince($0.date) <= 90 ? $0 : nil }
+            let currentBackup = latestBackup.flatMap { date.timeIntervalSince($0.date) <= 90 ? $0 : nil }
+            let chosen: VenusEnergyPoint?
+            if let currentBackup, currentBackup.value > 0 { chosen = currentBackup }
+            else if let currentGrid, currentGrid.value > 0 { chosen = currentGrid }
+            else { chosen = currentBackup ?? currentGrid }
+            // The projection never stamps a retained source value with another channel's receipt.
+            if let chosen, result.last.map({ chosen.date > $0.date }) ?? true { result.append(chosen) }
+        }
         return result
     }
 
@@ -288,7 +319,7 @@ final class VenusEnergyStore: ObservableObject {
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
                 Task { @MainActor [weak self] in if self?.generation == expectedGeneration { self?.persistenceError = nil } }
             } catch {
-                Task { @MainActor [weak self] in if self?.generation == expectedGeneration { self?.persistenceError = "Не вдалося зберегти локальну історію." } }
+                Task { @MainActor [weak self] in if self?.generation == expectedGeneration { self?.persistenceError = VL("Не вдалося зберегти локальну історію.", "Could not save local history.") } }
             }
         }
         if wait { writer.sync(execute: work) } else { writer.async(execute: work) }
@@ -318,6 +349,11 @@ final class VenusEnergyStore: ObservableObject {
         try expect(store.historyCount == 4, "actual samples")
         store.record(report: try report(at: now, clock: now), device: device, flow: .supplyingHome, now: now)
         try expect(store.historyCount == 4, "retained clocks deduplicated")
+        let history = store.series(hours: 1, now: now)
+        try expect(history.map(\.id) == ["grid_input_w"] && history[0].segments.flatMap({ $0 }).map(\.value) == [1990, 1990, 1990, 1990], "E3 negative AC input becomes positive without battery substitution")
+        try expect(history[0].segments[0][0].date == now.addingTimeInterval(-180), "projection preserves original source clock")
+        let reversed = store.series(hours: 1, chargingGridSign: 1, now: now)
+        try expect(reversed.map(\.id) == ["output_w"] && reversed[0].segments[0][0].value == 1990, "explicit calibration overrides E3 history profile")
         let discharge = store.forecast(now: now, outageStart: now.addingTimeInterval(-100), outageEnd: now.addingTimeInterval(3600))
         try expect(discharge.status == .supplying && discharge.basis == .energyTrend && discharge.rateW == 300, "Wh trend rate")
         try expect(abs((discharge.runtimeHours ?? 0) - 2000.0 / 300) < 0.001 && discharge.enoughForOutage == true && discharge.budgetW == 2000, "reserve runtime and current outage")
@@ -347,6 +383,16 @@ final class VenusEnergyStore: ObservableObject {
         let other = VenusDiscoveredDevice(name: "Venus A", ip: "192.168.1.3", port: 30000, firmware: 150, wifiMac: nil, bleMac: nil)
         store.record(report: try report(at: now), device: other, flow: .unknown, now: now)
         try expect(store.historyCount == 1 && store.forecast(now: now).rateW == nil, "station identity isolation and grid not battery")
+        let unknownDirection = store.series(hours: 1, now: now)
+        try expect(unknownDirection.isEmpty, "uncalibrated grid direction is not labelled charge or discharge")
+        let combinedOutput = Self.dischargePoints(grid: [.init(date: now.addingTimeInterval(-30), value: 300), .init(date: now, value: 400)],
+                                                  backup: [.init(date: now.addingTimeInterval(-60), value: 800), .init(date: now.addingTimeInterval(-20), value: 0)])
+        try expect(combinedOutput.map(\.value) == [800, 300, 400] && combinedOutput.map(\.date) == [now.addingTimeInterval(-60), now.addingTimeInterval(-30), now], "one discharge projection preserves backup and export with their original clocks")
+        let retainedOutput = Self.dischargePoints(grid: [.init(date: now, value: 400)], backup: [.init(date: now.addingTimeInterval(-30), value: 800)])
+        try expect(retainedOutput.count == 1 && retainedOutput[0].date == now.addingTimeInterval(-30), "a retained backup sample does not inherit the grid receipt")
+        let pulse = [VenusEnergyPoint(date: now.addingTimeInterval(-60), value: 0),
+                     VenusEnergyPoint(date: now.addingTimeInterval(-30), value: 1990), .init(date: now, value: 0)]
+        try expect(Self.segments(pulse).first?.map(\.value) == [0, 1990, 0], "real short pulse and surrounding zeros are retained")
         store.record(report: try report(at: now.addingTimeInterval(10)), device: other, flow: .unknown, now: now)
         try expect(store.historyCount == 1, "future report rejected")
         let split = Self.segments([.init(date: now.addingTimeInterval(-200), value: 1), .init(date: now.addingTimeInterval(-140), value: 2), .init(date: now, value: 3)])
