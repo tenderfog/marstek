@@ -2,7 +2,7 @@
 
 Notable changes to VenusBar, starting with version **0.1**. Build numbers increase within a version. Entries below describe development builds; a downloadable release exists only when it appears in [GitHub Releases](https://github.com/tenderfog/marstek/releases).
 
-## Unreleased
+## 0.1 · Build 4 — 2026-10-28
 
 ### Added
 
