@@ -5,28 +5,28 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <title>VenusBar</title>
         <item>
             <title>0.1</title>
-            <pubDate>Wed, 28 Oct 2026 13:21:10 +0200</pubDate>
+            <pubDate>Wed, 28 Oct 2026 13:59:00 +0200</pubDate>
             <link>https://github.com/tenderfog/marstek</link>
             <sparkle:fullReleaseNotesLink>https://github.com/tenderfog/marstek/blob/main/CHANGELOG.md</sparkle:fullReleaseNotesLink>
-            <sparkle:version>4</sparkle:version>
+            <sparkle:version>5</sparkle:version>
             <sparkle:shortVersionString>0.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<p>VenusBar 0.1 · збірка 4 / build 4<br>
+            <description><![CDATA[<p>VenusBar 0.1 · збірка 5 / build 5<br>
 <br>
-• Оновлення в застосунку: перевірка нових версій, цифровий підпис і встановлення з підтвердженням.<br>
-• Просте підключення: видимі поля IP і порту, окрема інструкція та зрозуміла повторна спроба.<br>
-• Команди перевіряють ідентифікатор станції перед надсиланням.<br>
-• Нове оформлення GitHub, українська й англійська документація та історія змін.<br>
+• Налаштування: шість карток у два ряди та окремий рядок «Про VenusBar» з версією.<br>
+• Розкривні секції відкриваються кнопкою на всю ширину. Довгі сторінки показують підказку прокручування.<br>
+• Про нову збірку можна отримати окреме сповіщення. На головній панелі біля ⚙ є кнопка завантаження.<br>
+• Репозиторій тепер українською з повною англійською версією та галереєю першого запуску.<br>
 <br>
-In-app updates with signature verification and confirmation; clearer IP/port setup and connection guide; station identity checks before commands; refreshed documentation and changelog.<br>
+Six settings tiles in two rows, full-width expandable sections, scroll hints, optional update notifications, a prominent download button, and Ukrainian-first documentation with a complete English guide.<br>
 <br>
-Тестова alpha. Apple Developer ID та нотаризації поки немає. Venus A потребує перевірки на реальному пристрої.<br>
-Experimental alpha. Apple Developer ID signing and notarization are not yet available. Venus A still needs hardware testing.</p>
+Сповіщення потрібно ввімкнути в налаштуваннях VenusBar і дозволити в macOS. Завантаження та встановлення оновлень потребують твого підтвердження.<br>
+Enable notifications in VenusBar and allow them in macOS. Downloading and installing updates require your confirmation.</p>
 ]]></description>
-            <enclosure url="https://github.com/tenderfog/marstek/releases/download/v0.1-build4/VenusBar.zip" length="3784740" type="application/octet-stream" sparkle:edSignature="iRLqohtDp9qa2aOHP19qv1cuWtDfcIGEbYLKnpveViMz3iDAtnKCETImE28x29SHHzHlx1X/yaOIPwb8oJCmDg=="></enclosure>
+            <enclosure url="https://github.com/tenderfog/marstek/releases/download/v0.1-build5/VenusBar.zip" length="3866229" type="application/octet-stream" sparkle:edSignature="ygNT3vKcA0vWY10BjovY9BRBw6mPLXRbIGiLJpa/I7Y2Dr9b9CYAyDjApmgVxYwHjXpi8ng/OvyKSdS+HRJXCg=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: Z5djgNOw3xmEImmMbyTK5ukmwuiG7NyDd+ktX1N2ar2fXEWdlxn3j8hbFb1UC30bfL8ZcQI3fvqNDBITBKbOAw==
-length: 2474
+edSignature: t0R4ocCRfVbyu3G7qZ3y//+O90VxqMYF9FfGaO2MUcWylETu6jYVlvGEUqocZ1vcBVi16paLhPUyZKIxaT+/AA==
+length: 2650
 -->

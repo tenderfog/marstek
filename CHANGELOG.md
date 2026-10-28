@@ -2,6 +2,22 @@
 
 Notable changes to VenusBar, starting with version **0.1**. Build numbers increase within a version. Entries below describe development builds; a downloadable release exists only when it appears in [GitHub Releases](https://github.com/tenderfog/marstek/releases).
 
+## 0.1 · Build 5 — 2026-10-28
+
+### Added
+
+- Optional notifications about new VenusBar builds, controlled separately under the existing master notification switch and macOS permission.
+- A visible update prompt in the main panel that remains available after reopening the app; update settings identify the version and build number.
+- A complete first-launch screenshot sequence: language, station guide, Local API, automatic discovery, manual connection and connection help.
+
+### Changed
+
+- Ukrainian is now the primary repository language; a complete English guide is available separately.
+- The settings index uses six tiles in a three-column grid, with About in the footer.
+- Collapsible sections use full-width buttons. Overflowing pages show a visible scrollbar and a scroll hint.
+
+No real notification delivery, physical station control or hardware compatibility is claimed by the documentation screenshots; their data and permission states are simulated.
+
 ## 0.1 · Build 4 — 2026-10-28
 
 ### Added
