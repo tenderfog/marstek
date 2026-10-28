@@ -1,0 +1,137 @@
+name: Publish VenusBar update
+
+on:
+  push:
+    branches: [main]
+    paths: ['releases/current/**']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: venusbar-update-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Verify and publish locally signed update
+    if: github.ref == 'refs/heads/main' && github.repository == 'tenderfog/marstek'
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Validate manifest and prevent duplicate or older releases
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          gh api --paginate --slurp "repos/$GH_REPO/tags?per_page=100" > "$RUNNER_TEMP/tags.json"
+          python3 <<'PY'
+          import json, os, pathlib, re
+          config = json.loads(pathlib.Path('releases/current/manifest.json').read_text())
+          version, build = config['version'], config['build']
+          if not isinstance(version, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,2}', version):
+              raise SystemExit('Release version must be a numeric dotted version.')
+          if type(build) is not int or build < 1:
+              raise SystemExit('Release build must be a positive integer.')
+          if type(config['runID']) is not int or config['runID'] < 1 or not re.fullmatch(r'[a-f0-9]{40}', config['sourceCommit']):
+              raise SystemExit('Manifest must identify a source commit and CI run.')
+          if config['artifactName'] != 'VenusBar-universal' or not re.fullmatch(r'[a-f0-9]{64}', config['zipSHA256']):
+              raise SystemExit('Manifest artifact or checksum is invalid.')
+          tag = f'v{version}-build{build}'
+          releases = sum(json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'releases.json').read_text()), [])
+          tags = sum(json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'tags.json').read_text()), [])
+          if any(item['tag_name'] == tag for item in releases) or any(item['name'] == tag for item in tags):
+              raise SystemExit('This release tag already exists. Releases are never overwritten.')
+          published_builds = []
+          for item in releases:
+              if item['draft']:
+                  continue
+              match = re.fullmatch(r'v[0-9]+(?:\.[0-9]+){1,2}-build([0-9]+)', item['tag_name'])
+              if match:
+                  published_builds.append(int(match[1]))
+              elif any(asset['name'] == 'appcast.xml' for asset in item['assets']):
+                  raise SystemExit('A published update uses an unknown tag format. Check its build number before publishing.')
+          if published_builds and build <= max(published_builds):
+              raise SystemExit('Release build must be greater than every previously published build.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\nbuild={build}\ntag={tag}\nrun_id={config["runID"]}\nsource_commit={config["sourceCommit"]}\n')
+          PY
+
+      - name: Check CI provenance and download the exact reviewed archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_RUN_ID: ${{ steps.release.outputs.run_id }}
+          SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
+        run: |
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN_ID" > "$RUNNER_TEMP/build-run.json"
+          python3 <<'PY'
+          import json, os, pathlib
+          run = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'build-run.json').read_text())
+          valid = (run['id'] == int(os.environ['BUILD_RUN_ID'])
+                   and run['head_sha'] == os.environ['SOURCE_COMMIT']
+                   and run['path'] == '.github/workflows/build.yml'
+                   and run['event'] in ('push', 'workflow_dispatch')
+                   and run['head_branch'] == 'main'
+                   and run['status'] == 'completed' and run['conclusion'] == 'success'
+                   and run['repository']['full_name'] == os.environ['GH_REPO']
+                   and run['head_repository']['full_name'] == os.environ['GH_REPO'])
+          if not valid:
+              raise SystemExit('The artifact must come from a successful main-branch Build VenusBar run for the exact signed source commit.')
+          PY
+          gh run download "$BUILD_RUN_ID" --name VenusBar-universal --dir dist
+
+      - name: Verify public-key signatures before extracting the app
+        run: |
+          swift scripts/verify_update.swift Config/UpdatePublicKey.txt dist/VenusBar.zip \
+            releases/current/appcast.xml releases/current/manifest.json
+          unzip -tq dist/VenusBar.zip
+          mkdir "$RUNNER_TEMP/venusbar-release-app"
+          ditto -x -k dist/VenusBar.zip "$RUNNER_TEMP/venusbar-release-app"
+          xcrun lipo "$RUNNER_TEMP/venusbar-release-app/VenusBar.app/Contents/MacOS/VenusBar" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict "$RUNNER_TEMP/venusbar-release-app/VenusBar.app"
+          python3 <<'PY'
+          import json, os, pathlib, plistlib
+          manifest = json.loads(pathlib.Path('releases/current/manifest.json').read_text())
+          app = pathlib.Path(os.environ['RUNNER_TEMP'], 'venusbar-release-app/VenusBar.app')
+          with (app/'Contents/Info.plist').open('rb') as source:
+              info = plistlib.load(source)
+          expected_feed = 'https://github.com/tenderfog/marstek/releases/latest/download/appcast.xml'
+          if info.get('SUFeedURL') != expected_feed or not info.get('SURequireSignedFeed') or not info.get('SUVerifyUpdateBeforeExtraction') or info.get('SUSignedFeedFailureExpirationInterval') != 0:
+              raise SystemExit('The app must require signed feeds and verified archives from the production HTTPS feed.')
+          if info.get('CFBundleVersion') != str(manifest['build']) or info.get('CFBundleShortVersionString') != manifest['version']:
+              raise SystemExit('Built app version does not match the signed release manifest.')
+          if info.get('CFBundleIdentifier') != 'local.offline.VenusBar':
+              raise SystemExit('Unexpected bundle identifier.')
+          if info.get('SUPublicEDKey') != pathlib.Path('Config/UpdatePublicKey.txt').read_text().strip():
+              raise SystemExit('The app update key does not match the checked-in public key.')
+          notes = f"VenusBar {manifest['version']} · build {manifest['build']}.\n\nChanges: https://github.com/tenderfog/marstek/blob/main/CHANGELOG.md\n\nExperimental alpha for macOS 13 or newer, Apple Silicon and Intel. This app is signed ad hoc, without Apple Developer ID or notarization. Sparkle signatures do not replace Apple approval for the first installation.\n\nInstall VenusBar.app in Applications, then use Settings → App updates for future versions. Your connection, language and notification settings are kept separately from the app.\n"
+          pathlib.Path('release-notes.md').write_text(notes)
+          PY
+          cp releases/current/appcast.xml dist/appcast.xml
+          (cd dist && shasum -a 256 VenusBar.zip appcast.xml > SHA256SUMS.txt)
+
+      - name: Upload complete draft and publish as latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_BUILD: ${{ steps.release.outputs.build }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.source_commit }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            dist/VenusBar.zip dist/appcast.xml dist/SHA256SUMS.txt \
+            --target "$RELEASE_COMMIT" --draft --latest=false \
+            --title "VenusBar $RELEASE_VERSION · build $RELEASE_BUILD (alpha)" \
+            --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

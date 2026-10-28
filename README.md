@@ -1,83 +1,149 @@
-# VenusBar
+<p align="center">
+  <img src="Assets/AppIcon/VenusBar-1024.png" width="96" alt="VenusBar app icon">
+</p>
 
-Нативний застосунок для macOS, що показує стан MARSTEK Venus у рядку меню. Один застосунок поєднує іконку статусу, компактний перегляд при наведенні та панель із показниками й налаштуваннями.
+<h1 align="center">VenusBar</h1>
 
-Версія **0.1**. Розробник — **tenderfog** · [GitHub](https://github.com/tenderfog/marstek) · [Зв’язок](mailto:tenderfog.site@gmail.com). **Зроблено в Україні.**
+<p align="center">
+  <strong>Your MARSTEK battery, a glance away.</strong><br>
+  A native macOS menu bar app for charge, power and outage planning.
+</p>
 
-Інтерфейс підтримує українську та англійську, а також жартівливий режим «Суржик» для коротких підписів. Мова обирається перед першим підключенням і змінюється в налаштуваннях. Після підключення пропонується додати адресу для графіка; цей крок можна пропустити.
+<p align="center">
+  <a href="https://github.com/tenderfog/marstek/actions/workflows/build.yml"><img src="https://github.com/tenderfog/marstek/actions/workflows/build.yml/badge.svg" alt="Build status"></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-24262D?logo=apple&amp;logoColor=white" alt="macOS 13 or newer">
+  <img src="https://img.shields.io/badge/Apple_Silicon_%2B_Intel-Universal-24262D" alt="Universal build for Apple Silicon and Intel">
+  <img src="https://img.shields.io/badge/version-0.1_alpha-EC8759" alt="Version 0.1 alpha">
+</p>
 
-**Alpha:** читання перевірено на реальній Venus E 3.0 з прошивкою 150. Підтримку Venus A реалізовано за протоколом виробника; на реальній Venus A її ще не перевірено. Фізичне виконання команд керування також не перевірене. Перевірка поведінки панелі при наведенні ще триває.
+<p align="center">
+  <a href="https://github.com/tenderfog/marstek/releases"><strong>Download</strong></a> ·
+  <a href="CHANGELOG.md">What's new</a> ·
+  <a href="#get-started">Get started</a> ·
+  <a href="https://github.com/tenderfog/marstek/issues">Report an issue</a> ·
+  <a href="docs/README.uk.md">Українська</a>
+</p>
 
-## Можливості
+<p align="center">
+  <img src="docs/images/overview.png" width="520" alt="VenusBar overview showing 76% battery, 284 W discharge, today's outage intervals and power history">
+  <br><sub>Actual app views with sample readings and a fictional address. See <a href="docs/images/README.md">screenshot details</a>.</sub>
+</p>
 
-- Заряд, температура, доступна енергія та показники потужності через локальний UDP API.
-- Кольори станції: зелений — заряджання, червоний — розряджання. Графік відключень позначає план оператора окремо від фактичного стану станції.
-- Окремі вхід і навантаження без від’ємних ватів; нульові потужності приховані в короткому перегляді. Для підтвердженої потужності виходу — частка навантаження, наприклад 800 із 2500 Вт = 32%.
-- Температурне кільце з рівнями уваги 45/50/55°C: жовтим, помаранчевим і червоним. Збережений показ позначається нейтрально.
-- Дані сонячних входів для Venus A, якщо їх повертає прошивка.
-- Автоматичний пошук станції та визначення моделі; ручне введення IP й порту за потреби.
-- Збереження останніх показників, повтори читання після таймаутів і один час оновлення внизу панелі.
-- Графік потужності за 1, 3, 5 годин або добу з горизонтальним переглядом довгих періодів; історія збирається локально. Між відповідями лінія утримує останній показ, а час його отримання показано окремо. Нульова потужність не має кольорової лінії.
-- Пошук адреси у публічному сервісі YASNO, сьогоднішні інтервали відключень і позначка поточного часу. Підтримуються регіони та оператори, які повертає сервіс.
-- Приблизна автономність до планового ввімкнення світла, орієнтир навантаження й час до повного заряду, коли для оцінки достатньо даних батареї.
-- Оновлення кожні 10, 30 або 60 секунд і необов’язковий запуск разом із macOS.
-- Локальні сповіщення про високе споживання з власним порогом у ватах. Вимкнені до вибору користувача; повтори обмежені гістерезисом і паузою 5 хвилин. VenusBar не визначає конкретний прилад.
-- Команди режимів, розкладу й налаштувань за [MARSTEK Open API Rev 3.1](https://static-eu.marstekenergy.com/ems/resource/agreement/MarstekDeviceOpenApi.pdf). SYS-налаштування доступні для визначеної Venus E3/A з прошивкою 150 або новішою. Прийняття команди API не доводить її фізичного виконання.
+VenusBar keeps your battery in the menu bar. Hover for a quick look; click for the full view. It talks directly to the station over your local network, without asking for your MARSTEK account credentials.
 
-Swift, SwiftUI та AppKit; зовнішніх пакетних залежностей немає. Компоненти кнопок і карток адаптовано зі [SwiftfulUI](https://github.com/SwiftfulThinking/SwiftfulUI) за MIT; повідомлення про ліцензію включене в застосунок. Зібраний застосунок працює самостійно, без Python, вихідного каталогу чи облікових даних Marstek у VenusBar.
+**Early alpha.** Reading has been tested on a physical **Venus E 3.0, firmware 150**. Venus A support is implemented but still needs hardware testing. Current builds are **not Apple notarized**, so macOS may block the first launch. [Installation notes →](docs/FIRST-RUN.txt)
 
-## Перший запуск
+## A clear view of your energy
 
-1. Підключи Mac і станцію до тієї самої локальної мережі.
-2. У застосунку Marstek відкрий станцію → налаштування → **Local API** та ввімкни його. Типовий UDP-порт — **30000**; у VenusBar потрібно вказати той самий порт.
-3. Відкрий VenusBar. Якщо macOS запитає доступ до локальної мережі, дозволь його.
-4. Пройди коротку інструкцію та натисни **«Шукати автоматично»**. Модель визначається з відповіді станції. За потреби розгорни **«Ввести IP вручну»**.
-5. Напрямок енергії визначається з доступних показників. Для E3 є перевірений профіль знака потужності; за потреби доступне ручне уточнення в налаштуваннях станції. Воно змінює лише локальну індикацію.
-6. У **«Графіки відключень»** обери регіон, оператора, вулицю й будинок, потім підтвердь отриману групу. Адреса надсилається лише публічному сервісу YASNO.
-7. В **«Інше»** можна змінити інтервал читання, автозапуск і локальний резерв для прогнозу. Початковий резерв 20% стосується розрахунку автономності та не змінює DOD станції.
+| | What you can do |
+| :--- | :--- |
+| **At a glance** | See battery percentage in the menu bar and a compact hover panel with active power readings, temperature and an optional daily outage timeline. |
+| **Charge & discharge** | Separate power readings, remaining energy in kWh, battery temperature and load relative to a known output rating. Green means charging; red means discharging. |
+| **Power history** | Explore 1 hour, 3 hours, 5 hours or a full day. Longer periods scroll horizontally. Between responses, the chart holds the last reading and shows its original time. |
+| **Outage schedules** | Find your street and building through YASNO, then see today's intervals and the current time. Skip this entirely if you do not need it. |
+| **Battery estimates** | Estimate time to full charge or whether the battery should last until scheduled power restoration, when sufficient battery data is available. |
+| **High-load alerts** | Choose a threshold in watts and get a local notification when consumption rises above it. Notifications are off until you enable them and allow them in macOS. |
+| **Station controls** | Access the model's supported API commands for modes, charging schedules and settings. Physical execution still needs hardware validation. |
+| **Made for macOS** | SwiftUI and AppKit, dark translucent surfaces, optional launch at login, and Ukrainian, English or the playful “Surzhyk” interface. |
 
-Підключення, останні показники, історія та обрана адреса зберігаються локально в `~/Library/Application Support/VenusBar/` і не належать до репозиторію чи ZIP застосунку.
+<p align="center">
+  <img src="docs/images/notifications.png" width="460" alt="Notification settings with a high-consumption alert threshold set to 850 W">
+  <br><sub>Set the consumption threshold that matters to you. This example uses simulated notification permission.</sub>
+</p>
 
-## Збірка
+## Get started
 
-Потрібні macOS 13+, Swift із сумісним macOS SDK та Xcode Command Line Tools. Під час збірки скрипт може використати `python3` для обходу дубльованої карти модулів у деяких версіях Command Line Tools; у готовому застосунку Python не використовується.
+1. Download **VenusBar.zip** from [Releases](https://github.com/tenderfog/marstek/releases), unzip it and move **VenusBar.app** to **Applications**.
+2. Open it and choose your language. VenusBar lives in the menu bar, without a Dock icon.
+3. Connect your Mac and station to the same local network. In the official MARSTEK app, enable **Local API** and check **Ports**. Use that exact UDP port; `30000` is only the default.
+4. Allow Local Network access if macOS asks, then choose **Find automatically**. You can also enter the station's IP address and port manually.
+5. Add an address for outage schedules, or choose **Set up later**. The schedule stays hidden until configured.
 
-З кореня репозиторію:
+If discovery fails, check the port and **System Settings → Privacy & Security → Local Network** on macOS 15 or newer. Manual IP entry needs the same network permission. Guest Wi-Fi or client isolation can also prevent the Mac and station from communicating.
+
+<details>
+  <summary>Preview setup and the connection guide</summary>
+  <p align="center">
+    <img src="docs/images/onboarding.png" width="460" alt="Setup with manual IP address and Local API port fields expanded">
+    <br><sub>Automatic discovery or a manual connection, with the same port as the station.</sub>
+  </p>
+  <p align="center">
+    <img src="docs/images/guide.png" width="420" alt="Built-in guide explaining where to find the station IP address and Local API port">
+    <br><sub>The in-app guide links to the official Venus E3 and Venus A manuals.</sub>
+  </p>
+</details>
+
+### Updating
+
+Starting with **build 4**, VenusBar uses [Sparkle](https://sparkle-project.org/) for in-app updates. Open **Settings → App updates → Check for Updates**, or enable automatic checks. Review the changes, then choose whether to download, install and restart. Your station connection, address, history and preferences are kept.
+
+Older builds need **one manual installation** of a build with the updater. Public updates are distributed through GitHub Releases; downloading them does not require a GitHub account. The updater's signatures do not replace Apple notarization or remove the first-launch restriction.
+
+For maintainers: [how releases and signed updates are published →](docs/RELEASING.md)
+
+## Compatibility
+
+| | Current status |
+| :--- | :--- |
+| **macOS** | 13 or newer; universal build for Apple Silicon and Intel. |
+| **Venus E 3.0** | Local API reading verified on firmware 150. Other firmware and wiring arrangements need testing. |
+| **Venus A** | Protocol support implemented, including solar inputs when returned by the station. Real-device testing is still needed. |
+| **System settings** | Require a recognized E3/A and firmware 150 or newer. Controls also require a matching known Wi-Fi/Bluetooth station identifier. An accepted API command does not confirm its physical execution. |
+| **Outage schedules** | Regions and operators returned by YASNO's public service. Availability depends on that service. |
+
+### What the readings mean
+
+- **The outage schedule is a plan.** It is separate from station telemetry and cannot confirm that mains electricity is physically present. Zero watts alone cannot confirm it either.
+- **Estimates depend on the load.** Runtime uses usable battery energy and recent battery power or an energy trend. A local reserve, initially 20%, affects the estimate; it does not change the station's discharge-depth setting.
+- **Last known values remain visible.** A failed request does not erase the dashboard. Source timestamps and stale states distinguish saved readings from fresh responses.
+- **LEDs are an interpretation.** The API does not expose each physical indicator directly. The drawing uses the available readings and conservative estimates.
+- **Temperature colours are advisory.** The 45 / 50 / 55°C levels are VenusBar attention markers, not verified BMS shutdown thresholds. Internal battery temperature is not ambient temperature.
+
+## Your data
+
+Station settings, the last reading, local power history and the selected outage address live in:
+
+```text
+~/Library/Application Support/VenusBar/
+```
+
+They are not included in the app archive. Station requests stay on the local network. If you enable outage schedules, address lookup goes to YASNO. Update checks and downloads use GitHub and do not upload your station readings or saved address.
+
+## Build from source
+
+Use macOS 13+ with Xcode Command Line Tools and a compatible Swift/macOS SDK:
 
 ```sh
+git clone https://github.com/tenderfog/marstek.git
+cd marstek
 zsh scripts/build_venusbar.sh
 ```
 
-Скрипт збирає `build/VenusBar.app` і `build/VenusBar.zip`, містить власні схематичні ілюстрації інструкції та запускає перевірки без мережевих запитів. Він намагається зібрати `arm64` і `x86_64`; якщо SDK підтримує лише одну архітектуру, це буде зазначено у виводі.
+The script fetches a pinned, checksum-verified Sparkle release, builds the app, signs the local build ad hoc, runs offline checks and creates:
+
+```text
+build/VenusBar.app
+build/VenusBar.zip
+```
+
+Run the checks again with:
 
 ```sh
 build/VenusBar.app/Contents/MacOS/VenusBar --self-check
-open build/VenusBar.app
 ```
 
-`--self-check` перевіряє парсинг протоколу, обмеження команд, моделі, часові мітки та допоміжну логіку інтерфейсу. Він не шукає станції й не виконує фізичних команд.
+These checks cover protocol parsing, command limits, timestamps and application logic. They do not search your network or send commands to a station. Python may be used during packaging for a toolchain workaround; the finished app needs no Python runtime.
 
-`Package.swift` описує один виконуваний target із `Sources/VenusBar`. Для створення `.app` із ресурсами використовуй наведений скрипт пакування.
+## Help make it better
 
-## Межі alpha-версії
+Found a bug? [Open an issue](https://github.com/tenderfog/marstek/issues) with your macOS version, VenusBar build, station model, firmware and the exact error. Remove addresses, IP/MAC addresses, Wi-Fi names and other private details from screenshots or logs before posting.
 
-- Збірка має **ad hoc** підпис. Підпису Apple Developer ID і нотаризації немає; Gatekeeper може заблокувати застосунок, завантажений з інтернету. За потреби скористайся стандартним дозволом відкриття в налаштуваннях macOS або збери застосунок із вихідного коду.
-- Перевірене читання Venus E3 не є перевіркою роботи всіх прошивок, моделей або електричних схем.
-- E3 має емпірично перевірений профіль напрямку AC-потоку; ручне уточнення має пріоритет. Дані Venus A за наявності сонячної генерації трактуються консервативно. Нуль ватів сам собою не підтверджує наявності зовнішньої мережі; ручне підтвердження мережі діє 90 секунд.
-- Час відповіді API не є часом фізичного виміру. Застарілі й невідомі стани відображаються нейтрально.
-- Індикація BACKUP доповнюється непрямими оцінками. Фізичні LED окремо не зчитуються. Повний заряд із нульовою потужністю не вважається підтвердженням GRID: такі ж покази отримано під час реального відключення. Оцінки не керують електроприладами.
-- Потужність входу з мережі та виходу до приладів не є вимірюванням чистої потужності батареї. Навантаження стосується вибраного каналу, а не обов’язково всієї квартири. Номінал резервного виходу відрізняється від ліміту експорту в мережу; невідомий номінал не підставляється автоматично.
-- Venus E3 використовує LiFePO₄. Внутрішня температура `bat_temp` не дорівнює температурі довкілля. Пороги кільця 45/50/55°C — орієнтири уваги VenusBar, не заявлені пороги BMS чи відключення. Для прикладу, [EVE LF280K](https://www.evebatteryusa.com/_files/ugd/abe55e_7ba2e98dd2884f8d978b861be2b471e2.pdf) має діапазон заряджання 0…55°C і розряджання −20…55°C; точний виробник і модель комірок Marstek не підтверджені, тому межі іншої комірки не видаються за обмеження станції. Індикація не змінює її захист і не дозволяє заряджання.
-- Графік YASNO є планом; аварії та зміни можуть його випереджати. Застарілий, неповний чи аварійний графік не підтверджує наявності світла.
-- Прогноз використовує дані батареї або її перевірений тренд енергії. Накопиченої історії спочатку немає. Оцінка залежить від навантаження, резерву та майбутніх змін; швидкість заряду наприкінці може зменшуватися.
-- Команди, зокрема зміни режиму, розкладу та скидання налаштувань, можуть змінювати роботу станції. Фізичні сценарії керування потребують окремої перевірки.
+Small fixes, clearer translations and results from Venus A testing are welcome. See [the changelog](CHANGELOG.md) for development history and [release instructions](docs/RELEASING.md) for the publishing process.
 
-Перший запуск містить власні схематичні ілюстрації. Офіційні інструкції: [Venus E3](https://static-eu.marstekenergy.com/ems/resource/agreement/app/venus/Venus_E3.pdf) та [Venus A](https://static-eu.marstekenergy.com/ems/resource/agreement/app/venus/Venus_A.pdf).
+---
 
-## English
+**Зроблено в Україні · Made in Ukraine**
 
-VenusBar is a native macOS menu-bar app for MARSTEK Venus E3 and Venus A, using the local UDP Open API. The packaged app has no Python runtime or third-party package dependencies. Onboarding discovers the device automatically or accepts a manual IP and port.
+Developed by [tenderfog](https://github.com/tenderfog) · [tenderfog.site@gmail.com](mailto:tenderfog.site@gmail.com)
 
-This is an **alpha**: read-only requests have been verified on a physical Venus E3 running firmware 150. Venus A protocol support, physical control commands, and hover-panel behavior still need hardware or UI verification. API acceptance is not proof of physical execution. SYS settings require firmware 150 or newer.
-
-Build on macOS 13+ with a compatible Swift/macOS SDK using `zsh scripts/build_venusbar.sh`. Outputs are `build/VenusBar.app` and `build/VenusBar.zip`; run `build/VenusBar.app/Contents/MacOS/VenusBar --self-check` for network-free checks. Builds are ad hoc signed and are not Developer ID signed or notarized.
+VenusBar is an independent, unofficial project and is not affiliated with MARSTEK. The app icon uses the manufacturer's mark; [source and attribution](Assets/AppIcon/SOURCE.md). Third-party components and their licences are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

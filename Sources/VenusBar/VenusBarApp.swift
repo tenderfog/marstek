@@ -216,6 +216,8 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         let applicationItem = NSMenuItem()
         let applicationMenu = NSMenu(title: "VenusBar")
+        applicationMenu.addItem(withTitle: VL("Перевірити оновлення…", "Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        applicationMenu.addItem(.separator())
         applicationMenu.addItem(withTitle: VL("Вийти з VenusBar", "Quit VenusBar"), action: #selector(quit), keyEquivalent: "q").target = self
         applicationItem.submenu = applicationMenu
         appMenu.addItem(applicationItem)
@@ -223,6 +225,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        VenusUpdates.shared.beforePresentingUpdate = { [weak self] in self?.closePanels() }
         configureApplicationMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else { return }
@@ -289,7 +292,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         notifications.refreshPermission()
         DispatchQueue.main.async { [weak self] in
-            guard let self, NSApp.isActive, self.fullPanel?.isVisible != true else { return }
+            guard let self, NSApp.isActive, !VenusUpdates.shared.isPresentingUpdate, self.fullPanel?.isVisible != true else { return }
             self.showFullPanel()
         }
     }
@@ -322,14 +325,18 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             hideIsland(animated: false)
             let menu = NSMenu()
             menu.addItem(withTitle: VL("Відкрити VenusBar", "Open VenusBar"), action: #selector(openPanelAction), keyEquivalent: "")
+            menu.addItem(withTitle: VL("Перевірити оновлення…", "Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: VL("Вийти з VenusBar", "Quit VenusBar"), action: #selector(quit), keyEquivalent: "q")
             for item in menu.items { item.target = self }
-            statusItem.popUpMenu(menu)
+            if let button = statusItem.button {
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+            }
         } else if fullPanel?.isVisible == true { closePanels() }
         else { showFullPanel() }
     }
     @objc private func openPanelAction() { showFullPanel() }
+    @objc private func checkForUpdates() { closePanels(); VenusUpdates.shared.checkForUpdates() }
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func updateStatus() {

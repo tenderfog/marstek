@@ -17,6 +17,12 @@ if [[ ! -f "$source_root/VenusBarApp.swift" ]]; then
 fi
 
 mkdir -p "$work_root" "$output_root"
+sparkle_root="$(zsh "$project_root/scripts/fetch_sparkle.sh")"
+release_version="$(/usr/bin/plutil -extract version raw -o - "$project_root/Config/Release.json")"
+release_build="$(/usr/bin/plutil -extract build raw -o - "$project_root/Config/Release.json")"
+public_update_key="$(cat "$project_root/Config/UpdatePublicKey.txt")"
+[[ "$release_version" =~ '^[0-9]+(\.[0-9]+){1,2}$' && "$release_build" =~ '^[1-9][0-9]*$' ]] || { printf '%s\n' 'Invalid release version/build.' >&2; exit 1; }
+[[ "$(printf '%s' "$public_update_key" | /usr/bin/base64 -D | wc -c | tr -d ' ')" == 32 ]] || { printf '%s\n' 'Invalid Sparkle public key.' >&2; exit 1; }
 stage_path="$(mktemp -d "$work_root/package.XXXXXX")"
 promotion_started=false
 promotion_complete=false
@@ -52,6 +58,8 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 stage_app="$stage_path/VenusBar.app"
 mkdir -p "$stage_path/sources" "$stage_app/Contents/MacOS" "$stage_app/Contents/Resources"
+mkdir -p "$stage_app/Contents/Frameworks"
+/usr/bin/ditto "$sparkle_root/Sparkle.framework" "$stage_app/Contents/Frameworks/Sparkle.framework"
 # Freeze one source revision for both architecture slices.
 cp "$source_root"/*.swift "$stage_path/sources/"
 cp "$project_root/THIRD_PARTY_NOTICES.md" "$stage_app/Contents/Resources/THIRD_PARTY_NOTICES.md"
@@ -107,7 +115,9 @@ for architecture in arm64 x86_64; do
     fi
     printf 'Компіляція VenusBar для %s…\n' "$architecture"
     binary_path="$stage_path/VenusBar-$architecture"
-    xcrun swiftc "${common_flags[@]}" -O "$stage_path/sources"/*.swift -o "$binary_path"
+    xcrun swiftc "${common_flags[@]}" -F "$sparkle_root" -framework Sparkle \
+        -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
+        -O "$stage_path/sources"/*.swift -o "$binary_path"
     architectures+=("$architecture")
     binaries+=("$binary_path")
 done
@@ -137,24 +147,46 @@ cat > "$stage_app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIconFile</key><string>VenusBar.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
-    <key>CFBundleVersion</key><string>3</string>
+    <key>CFBundleVersion</key><string>4</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>SUFeedURL</key><string>https://github.com/tenderfog/marstek/releases/latest/download/appcast.xml</string>
+    <key>SUVerifyUpdateBeforeExtraction</key><true/>
+    <key>SURequireSignedFeed</key><true/>
+    <key>SUSignedFeedFailureExpirationInterval</key><integer>0</integer>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUScheduledCheckInterval</key><integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key><false/>
+    <key>SUAutomaticallyUpdate</key><false/>
+    <key>SUEnableSystemProfiling</key><false/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>VenusBar знаходить ваші станції MARSTEK та читає їхні показники в домашній локальній мережі. Налаштування змінюються лише за вашою командою.</string>
 </dict>
 </plist>
 PLIST
+/usr/bin/plutil -replace CFBundleShortVersionString -string "$release_version" "$stage_app/Contents/Info.plist"
+/usr/bin/plutil -replace CFBundleVersion -string "$release_build" "$stage_app/Contents/Info.plist"
+/usr/bin/plutil -insert SUPublicEDKey -string "$public_update_key" "$stage_app/Contents/Info.plist"
 /usr/bin/plutil -lint "$stage_app/Contents/Info.plist"
-/usr/bin/codesign --force --sign - --options runtime --timestamp=none "$stage_app"
-/usr/bin/codesign --verify --strict --verbose=2 "$stage_app"
+signing_identity="${VENUSBAR_CODESIGN_IDENTITY:--}"
+if [[ "$signing_identity" == '-' ]]; then
+    # Ad hoc builds cannot use Hardened Runtime library validation with Sparkle.
+    /usr/bin/codesign --force --sign - --timestamp=none "$stage_app"
+else
+    sparkle_framework="$stage_app/Contents/Frameworks/Sparkle.framework"
+    /usr/bin/codesign --force --sign "$signing_identity" --options runtime "$sparkle_framework/Versions/B/XPCServices/Installer.xpc"
+    /usr/bin/codesign --force --sign "$signing_identity" --options runtime --preserve-metadata=entitlements "$sparkle_framework/Versions/B/XPCServices/Downloader.xpc"
+    /usr/bin/codesign --force --sign "$signing_identity" --options runtime "$sparkle_framework/Versions/B/Autoupdate"
+    /usr/bin/codesign --force --sign "$signing_identity" --options runtime "$sparkle_framework/Versions/B/Updater.app"
+    /usr/bin/codesign --force --sign "$signing_identity" --options runtime "$sparkle_framework"
+    /usr/bin/codesign --force --sign "$signing_identity" --options runtime "$stage_app"
+fi
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$stage_app"
 "$stage_app/Contents/MacOS/VenusBar" --self-check
-mkdir -p "$stage_path/share"
-/usr/bin/ditto "$stage_app" "$stage_path/share/VenusBar.app"
-cp "$project_root/docs/FIRST-RUN.txt" "$stage_path/share/FIRST-RUN.txt"
-/usr/bin/ditto -c -k --sequesterRsrc "$stage_path/share" "$stage_path/VenusBar.zip"
+# App-only archive prevents translocation issues and is usable by Sparkle.
+/usr/bin/ditto -c -k --sequesterRsrc --keepParent "$stage_app" "$stage_path/VenusBar.zip"
 
 # Only generated VenusBar artifacts are replaced, after compile/sign/check pass.
 [[ ! -e "$app_path" ]] || had_previous_app=true
@@ -166,4 +198,8 @@ mv "$stage_app" "$app_path"
 mv "$stage_path/VenusBar.zip" "$zip_path"
 promotion_complete=true
 printf 'VenusBar.app: %s\nVenusBar.zip: %s\nАрхітектури: %s\n' "$app_path" "$zip_path" "${architectures[*]}"
-printf '%s\n' 'Підпис ad hoc; Apple Developer ID і нотаризацію не виконано.'
+if [[ "$signing_identity" == '-' ]]; then
+    printf '%s\n' 'Підпис ad hoc; Apple Developer ID і нотаризацію не виконано.'
+else
+    printf '%s\n' 'Застосунок підписано; нотаризацію потрібно виконати окремо перед публікацією.'
+fi

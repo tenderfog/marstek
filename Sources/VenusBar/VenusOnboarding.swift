@@ -14,6 +14,8 @@ struct VenusOnboarding: View {
     @State private var manualExpanded = false
     @State private var helpShown = false
     @State private var didSearch = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var addressFocused: Bool
     private var stepNames: [String] { [VL("Станція", "Station"), "Local API", VL("Пошук", "Discovery")] }
 
     var body: some View {
@@ -25,12 +27,24 @@ struct VenusOnboarding: View {
                 VStack(alignment: .leading, spacing: 12) {
                     header
                     steps
-                    ScrollView {
-                        Group {
-                            if step == 2 { connection }
-                            else { instructions }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.scrollIndicators(.hidden).frame(maxHeight: 220)
+                    ScrollViewReader { scroll in
+                        ScrollView {
+                            Group {
+                                if step == 2 { connection }
+                                else { instructions }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                                .id(step)
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .trailing)))
+                        }.scrollIndicators(.automatic).frame(maxHeight: 220)
+                            .onChange(of: manualExpanded) { expanded in
+                                guard expanded else { return }
+                                DispatchQueue.main.async {
+                                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                                        scroll.scrollTo("manualConnection", anchor: .top)
+                                    }
+                                }
+                            }
+                    }
                     Spacer(minLength: 0)
                     footer
                 }.padding(24)
@@ -40,6 +54,12 @@ struct VenusOnboarding: View {
         .foregroundStyle(.white).tint(.white)
         .preferredColorScheme(.dark).background(.clear)
         .environment(\.locale, localization.language.locale)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: step)
+        .onChange(of: store.isDiscovering) { searching in
+            if !searching && didSearch && store.discoveredDevices.isEmpty && store.error != nil {
+                manualExpanded = true
+            }
+        }
         .onAppear {
             if let configuration = store.configuration {
                 address = configuration.ip
@@ -125,65 +145,92 @@ struct VenusOnboarding: View {
 
     private var connection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(VL("Знайдемо станцію самі", "Let’s find your station")).font(.system(size: 18, weight: .semibold))
-                Text(VL("Порт має збігатися з Local API → Ports у MARSTEK. Модель визначиться автоматично.", "Use the port shown in MARSTEK → Local API → Ports. The model will be detected automatically."))
-                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
-                VenusLocalAPIHelpLink(model: store.model)
-            }
-            HStack(alignment: .bottom, spacing: 12) {
-                Button(action: scan) {
-                    HStack(spacing: 9) {
-                        Image(systemName: "magnifyingglass")
-                        Text(scanTitle)
-                        if store.isDiscovering { ProgressView().controlSize(.small).tint(.black).accessibilityLabel(VL("Пошук станції", "Finding station")) }
-                    }.frame(maxWidth: .infinity)
-                }.buttonStyle(VenusButtonStyle(primary: true)).disabled(busy)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(VL("UDP-порт", "UDP port")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
-                    TextField("30000", text: $port).textFieldStyle(VenusTextFieldStyle()).onSubmit(scan)
-                        .accessibilityLabel(VL("UDP-порт Local API", "Local API UDP port"))
-                }.frame(width: 92)
-            }
-            if !store.discoveredDevices.isEmpty {
-                ForEach(store.discoveredDevices) { device in
-                    Button {
-                        connect(ip: device.ip, port: device.port, model: VenusModel.identify(device.name))
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "bolt.horizontal.circle")
-                            Text(device.name).fontWeight(.medium)
-                            Spacer(minLength: 8)
-                            Text(device.ip).font(.system(size: 12)).monospacedDigit().foregroundStyle(.white.opacity(0.65))
-                            Image(systemName: "arrow.right")
+            if !manualExpanded {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(VL("Знайдемо станцію самі", "Let’s find your station")).font(.system(size: 18, weight: .semibold))
+                    Text(VL("Увімкни Local API та вкажи порт із MARSTEK → Local API → Ports.", "Enable Local API and use the port from MARSTEK → Local API → Ports."))
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
+                }
+                HStack(alignment: .bottom, spacing: 12) {
+                    Button(action: scan) {
+                        HStack(spacing: 9) {
+                            Image(systemName: "magnifyingglass")
+                            Text(scanTitle)
+                            if store.isDiscovering { ProgressView().controlSize(.small).tint(.black).accessibilityLabel(VL("Пошук станції", "Finding station")) }
                         }.frame(maxWidth: .infinity)
-                    }.buttonStyle(VenusButtonStyle()).disabled(busy)
+                    }.buttonStyle(VenusButtonStyle(primary: true)).disabled(busy)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(VL("Порт", "Port")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                        TextField("30000", text: $port).textFieldStyle(VenusTextFieldStyle()).onSubmit(scan)
+                            .accessibilityLabel(VL("Порт Local API", "Local API port"))
+                    }.frame(width: 92)
+                }
+                if !store.discoveredDevices.isEmpty {
+                    ForEach(store.discoveredDevices) { device in
+                        Button {
+                            connect(ip: device.ip, port: device.port, model: VenusModel.identify(device.name))
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "bolt.horizontal.circle")
+                                Text(device.name).fontWeight(.medium)
+                                Spacer(minLength: 8)
+                                Text(device.ip).font(.system(size: 12)).monospacedDigit().foregroundStyle(.white.opacity(0.65))
+                                Image(systemName: "arrow.right")
+                            }.frame(maxWidth: .infinity)
+                        }.buttonStyle(VenusButtonStyle()).disabled(busy)
+                    }
                 }
             }
-            DisclosureGroup(isExpanded: $manualExpanded) {
-                HStack(spacing: 10) {
-                    TextField(VL("IP-адреса станції", "Station IP address"), text: $address)
-                        .textFieldStyle(VenusTextFieldStyle()).onSubmit(connectManually)
-                    Button(VL("Підключити", "Connect"), action: connectManually)
-                        .buttonStyle(VenusButtonStyle(primary: true))
-                        .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
-                }.padding(.top, 8)
-            } label: {
-                Text(VL("Ввести IP вручну", "Enter IP manually")).font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7)).frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-                    .contentShape(Rectangle())
+            Button { manualExpanded.toggle() } label: {
+                HStack {
+                    Label(manualExpanded ? VL("Повернутися до пошуку", "Back to discovery") : VL("Ввести IP-адресу", "Enter IP address"), systemImage: manualExpanded ? "arrow.left" : "network")
+                    Spacer(minLength: 8)
+                    if !manualExpanded { Image(systemName: "chevron.down") }
+                }.frame(maxWidth: .infinity).contentShape(Rectangle())
+            }.buttonStyle(VenusButtonStyle(compact: true))
+                .accessibilityValue(manualExpanded ? VL("Розгорнуто", "Expanded") : VL("Згорнуто", "Collapsed"))
+                .id("manualConnection")
+            if manualExpanded {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(VL("IP-адреса", "IP address")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+                            TextField("192.168.1.100", text: $address)
+                                .textFieldStyle(VenusTextFieldStyle()).onSubmit(connectManually)
+                                .focused($addressFocused)
+                                .accessibilityLabel(VL("IP-адреса станції", "Station IP address"))
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(VL("Порт", "Port")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+                            TextField("30000", text: $port).textFieldStyle(VenusTextFieldStyle()).onSubmit(connectManually)
+                                .accessibilityLabel(VL("Порт Local API", "Local API port"))
+                        }.frame(width: 84)
+                        Button(VL("Підключити", "Connect"), action: connectManually)
+                            .buttonStyle(VenusButtonStyle(primary: true))
+                            .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+                    }
+                    VenusConnectionHints()
+                }.transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                    .onAppear { addressFocused = true }
             }
             if let message = formMessage ?? store.error {
-                Label(message, systemImage: "exclamationmark.circle")
-                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(message, systemImage: "exclamationmark.circle")
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(VL("Перевір IP-адресу й порт, тоді натисни «Підключити». Або повтори автоматичний пошук.", "Check the IP address and port, then click Connect. Or try automatic discovery again."))
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.65))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if #available(macOS 15, *) {
                     Text(VL("Доступ на Mac: Системні параметри → Приватність і безпека → Локальна мережа → VenusBar. Після дозволу повтори пошук.", "Mac permission: System Settings → Privacy & Security → Local Network → VenusBar. After allowing access, search again."))
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            VenusLocalAPIHelpLink(model: store.model)
         }.padding(.top, 2)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: manualExpanded)
     }
 
     private var footer: some View {

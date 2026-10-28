@@ -45,38 +45,3 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
-
-  prerelease:
-    name: Publish tagged alpha prerelease
-    needs: build
-    # Manual runs and pull requests never publish, even when selecting a tag.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - name: Download verified build and publish prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          BUILD_RUN_ID: ${{ github.run_id }}
-        run: |
-          gh run download "$BUILD_RUN_ID" --name VenusBar-universal --dir dist
-          (cd dist && sha256sum --check SHA256SUMS.txt)
-          cat > release-notes.md <<'NOTES'
-          Experimental alpha for macOS 13 or newer, Apple Silicon and Intel.
-
-          Download VenusBar.zip and verify it against SHA256SUMS.txt. The app is
-          self-contained: no Python, project checkout, or cloud account is needed.
-
-          This build is signed ad hoc, without Apple Developer ID or notarization.
-          macOS may require explicit approval before opening a downloaded app.
-          Local Open API must be enabled on your supported MARSTEK station.
-          API acceptance does not confirm physical power flow or a changed setting.
-          NOTES
-          gh release create "$RELEASE_TAG" dist/VenusBar.zip dist/SHA256SUMS.txt \
-            --verify-tag --prerelease --latest=false \
-            --title "VenusBar $RELEASE_TAG (alpha)" --notes-file release-notes.md

@@ -5,6 +5,7 @@ import SwiftUI
 struct VenusPanel: View {
     @ObservedObject private var localization = VenusLocalization.shared
     @ObservedObject private var notifications = VenusNotificationsStore.shared
+    @ObservedObject private var updates = VenusUpdates.shared
     @ObservedObject var store: VenusStore
     @ObservedObject var outages: VenusOutagesStore
     @ObservedObject var energy: VenusEnergyStore
@@ -19,7 +20,7 @@ struct VenusPanel: View {
     @AppStorage("VenusBar.outageWelcomePending") private var addressSetupPending = false
     @State private var outageReturnPage = Page.settings
     @AppStorage("VenusBar.outageWelcomeCompleted") private var addressWelcomeCompleted = false
-    private enum Page { case overview, settings, stationSettings, outageSettings, notificationsSettings, otherSettings, controls, help, about }
+    private enum Page { case overview, settings, stationSettings, outageSettings, notificationsSettings, updateSettings, otherSettings, controls, help, about }
 
     var body: some View {
         Group {
@@ -33,6 +34,7 @@ struct VenusPanel: View {
                 case .stationSettings: stationSettings
                 case .outageSettings: VenusOutagesSettings(store: outages) { page = outageReturnPage }
                 case .notificationsSettings: notificationSettings
+                case .updateSettings: updateSettings
                 case .otherSettings: otherSettings
                 case .controls: VenusControls(store: store) { page = controlsReturnPage }
                 case .help: VenusHelp { page = helpReturnPage }
@@ -165,6 +167,8 @@ struct VenusPanel: View {
                 Divider()
                 Button(VL("Як користуватися VenusBar", "How to use VenusBar")) { openHelp(from: .overview) }
                 Button(VL("Про VenusBar", "About VenusBar")) { page = .about }
+                Button(VL("Перевірити оновлення…", "Check for Updates…"), action: updates.checkForUpdates)
+                    .disabled(!updates.canCheckForUpdates)
                 Divider()
                 Button(VL("Вийти з VenusBar", "Quit VenusBar")) { NSApplication.shared.terminate(nil) }
             } label: {
@@ -173,6 +177,12 @@ struct VenusPanel: View {
             }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 36).accessibilityLabel(VL("Меню станції", "Station menu"))
             Spacer()
             Button(action: openSettings) { Image(systemName: "gearshape").font(.system(size: 16)) }
+                .overlay(alignment: .topTrailing) {
+                    if updates.availableVersion != nil {
+                        Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 2, y: -2)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .buttonStyle(VenusButtonStyle(compact: true)).help(VL("Налаштування VenusBar", "VenusBar settings")).accessibilityLabel(VL("Налаштування VenusBar", "VenusBar settings"))
         }.frame(height: 36)
             .help("\(store.report?.mode.map { VL("Режим станції: \($0).", "Station mode: \($0).") } ?? "") \(store.warning ?? "")")
@@ -296,7 +306,8 @@ struct VenusPanel: View {
             settingsRow(VL("Мережа", "Network"), subtitle: VL("Пошук станції, IP та Local API", "Station discovery, IP and Local API"), symbol: "wifi", action: openStationSettings)
             settingsRow(VL("Графіки відключень", "Outage schedules"), subtitle: VL("Область, оператор та твоя група", "Region, operator and your group"), symbol: "bolt.slash") { openOutages(from: .settings) }
             settingsRow(VL("Сповіщення", "Notifications"), subtitle: VL("Події станції та високе навантаження", "Station events and high load"), symbol: "bell") { page = .notificationsSettings }
-            settingsRow(VL("Інші параметри", "Other settings"), subtitle: VL("Оновлення, автозапуск і довідка", "Updates, launch at login and help"), symbol: "slider.horizontal.3") { page = .otherSettings }
+            settingsRow(VL("Оновлення застосунку", "App updates"), subtitle: updateSubtitle, symbol: "arrow.down.circle") { page = .updateSettings }
+            settingsRow(VL("Інші параметри", "Other settings"), subtitle: VL("Мова, автозапуск і довідка", "Language, launch at login and help"), symbol: "slider.horizontal.3") { page = .otherSettings }
             settingsRow(VL("Про застосунок", "About the app"), subtitle: VL("Версія, розробник і контакти", "Version, developer and contacts"), symbol: "info.circle") { page = .about }
         }
     }
@@ -315,26 +326,40 @@ struct VenusPanel: View {
     private var connectionSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(VL("Підключення", "Connection")).font(.system(size: 14, weight: .semibold))
-            HStack(spacing: 9) {
-                TextField(VL("IP-адреса станції", "Station IP address"), text: $address)
-                TextField(VL("Порт", "Port"), text: $port).frame(width: 92)
-                Button(VL("Зберегти", "Save"), action: saveConnection).buttonStyle(VenusButtonStyle(primary: true)).disabled(store.commandBusy)
+            HStack(alignment: .bottom, spacing: 9) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(VL("IP-адреса", "IP address")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    TextField("192.168.1.100", text: $address).onSubmit(saveConnection)
+                        .accessibilityLabel(VL("IP-адреса станції", "Station IP address"))
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(VL("Порт", "Port")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    TextField("30000", text: $port).onSubmit(saveConnection)
+                        .accessibilityLabel(VL("Порт Local API", "Local API port"))
+                }.frame(width: 84)
+                Button(VL("Підключити", "Connect"), action: saveConnection)
+                    .buttonStyle(VenusButtonStyle(primary: true)).disabled(store.commandBusy || store.isDiscovering)
             }.textFieldStyle(VenusTextFieldStyle())
-            HStack {
-                Button(VL("Шукати автоматично", "Find automatically"), action: scan).buttonStyle(VenusButtonStyle()).disabled(store.isDiscovering || store.commandBusy)
-                Spacer()
-                VenusLocalAPIHelpLink(model: store.model)
+            VenusConnectionHints()
+            Button(action: scan) {
+                HStack(spacing: 9) {
+                    if store.isDiscovering {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else { Image(systemName: "magnifyingglass") }
+                    Text(store.isDiscovering ? VL("Шукаємо станцію…", "Finding your station…")
+                         : store.error != nil ? VL("Спробувати пошук ще раз", "Try discovery again") : VL("Шукати автоматично", "Find automatically"))
+                }.frame(maxWidth: .infinity)
+            }.buttonStyle(VenusButtonStyle()).disabled(store.isDiscovering || store.commandBusy)
+            VenusLocalAPIHelpLink(model: store.model)
+            if store.error != nil && !store.isDiscovering {
+                Text(VL("Перевір IP-адресу й порт у MARSTEK, тоді натисни «Підключити». Пошук також можна повторити.", "Check the IP address and port in MARSTEK, then click Connect. You can also try discovery again."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(VL("Вкажи той самий порт, що в MARSTEK → Local API → Ports. 30000 — лише стандартне значення.", "Use the port shown in MARSTEK → Local API → Ports. 30000 is only the default."))
-                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
-                .fixedSize(horizontal: false, vertical: true)
             if #available(macOS 15, *), store.error != nil {
                 Text(VL("Дозволь VenusBar доступ до локальної мережі: Системні параметри → Приватність і безпека → Локальна мережа.", "Allow VenusBar access in System Settings → Privacy & Security → Local Network."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            if store.isDiscovering {
-                Text(VL("Шукаємо станцію…", "Finding your station…")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
             }
             ForEach(store.discoveredDevices) { item in
                 Button { address = item.ip; port = String(item.port); saveConnection() } label: {
@@ -462,6 +487,47 @@ struct VenusPanel: View {
 
     private var notificationThresholdMaximum: Double { store.model == .venusE ? 2500 : 5000 }
 
+    private var updateSettings: some View {
+        settingsPage(VL("Оновлення застосунку", "App updates"), back: .settings) {
+            VStack(alignment: .leading, spacing: 14) {
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 34, weight: .light)).foregroundStyle(.white.opacity(0.8))
+                    .accessibilityHidden(true)
+                Text("VenusBar").font(.system(size: 23, weight: .semibold))
+                Text(versionLabel).font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
+                if let version = updates.availableVersion {
+                    Label(VL("Доступна версія \(version)", "Version \(version) is available"), systemImage: "arrow.down.circle.fill")
+                        .font(.system(size: 14, weight: .medium)).foregroundStyle(Color.accentColor)
+                }
+                Text(VL("Перевіряємо нові версії на GitHub. Коли з’явиться оновлення, побачиш, що змінилося, і зможеш встановити його.", "We check GitHub for new versions. When an update is available, you can see what changed and choose to install it."))
+                    .font(.system(size: 13)).foregroundStyle(.white.opacity(0.65))
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(VL("Перевірити оновлення", "Check for Updates"), action: updates.checkForUpdates)
+                    .buttonStyle(VenusButtonStyle(primary: true)).disabled(!updates.canCheckForUpdates)
+            }.padding(.vertical, 8)
+            rule
+            VStack(alignment: .leading, spacing: 9) {
+                Toggle(VL("Перевіряти автоматично", "Check automatically"), isOn: Binding(
+                    get: { updates.automaticallyChecksForUpdates },
+                    set: { updates.setAutomaticallyChecksForUpdates($0) }))
+                    .font(.system(size: 15, weight: .medium)).toggleStyle(.switch)
+                    .frame(minHeight: 44).disabled(!updates.isAvailable)
+                Text(VL("Завантаження та встановлення — після твого підтвердження. Підключення до станції, адреса й налаштування збережуться.", "Downloading and installing require your confirmation. Your station connection, address and settings are kept."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+                if !updates.isAvailable {
+                    Text(VL("Оновлення недоступні в цій збірці.", "Updates are not available in this build."))
+                        .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                }
+            }
+        }
+    }
+
+    private var updateSubtitle: String {
+        updates.availableVersion.map { VL("Доступна версія \($0)", "Version \($0) is available") }
+            ?? VL("Нові версії VenusBar", "New versions of VenusBar")
+    }
+
     private var otherSettings: some View {
         settingsPage(VL("Інші параметри", "Other settings"), back: .settings) {
             VStack(alignment: .leading, spacing: 9) {
@@ -473,7 +539,7 @@ struct VenusPanel: View {
                 }.pickerStyle(.segmented)
             }
             HStack {
-                Text(VL("Оновлення", "Refresh interval")).font(.system(size: 14))
+                Text(VL("Оновлення показників", "Readings refresh")).font(.system(size: 14))
                 Spacer()
                 HStack(spacing: 7) {
                     ForEach([10.0, 30.0, 60.0], id: \.self) { seconds in
@@ -487,7 +553,7 @@ struct VenusPanel: View {
                 .font(.system(size: 14)).toggleStyle(.switch).frame(minHeight: 44)
             VenusEnergyReserveControl(store: energy)
             HStack {
-                Text(store.isPolling ? VL("Автоматичне оновлення ввімкнено", "Automatic updates enabled") : VL("Оновлення призупинено", "Updates paused")).font(.system(size: 13)).foregroundStyle(.white.opacity(0.65))
+                Text(store.isPolling ? VL("Показники оновлюються автоматично", "Readings refresh automatically") : VL("Оновлення показників призупинено", "Readings refresh paused")).font(.system(size: 13)).foregroundStyle(.white.opacity(0.65))
                 Spacer()
                 if store.isPolling { Button(VL("Пауза", "Pause"), action: store.pause) }
                 else { Button(VL("Продовжити", "Resume"), action: store.start) }

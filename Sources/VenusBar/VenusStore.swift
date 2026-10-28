@@ -74,6 +74,20 @@ struct VenusDiscoveredDevice: Codable, Identifiable {
         case name, ip, port, firmware, wifiMac = "wifi_mac", bleMac = "ble_mac"
     }
 
+    var commandIdentity: [String: String]? {
+        var identity = ["expected_device": name]
+        for (key, value) in [("expected_wifi_mac", wifiMac), ("expected_ble_mac", bleMac)] {
+            if let value = VenusAPI.canonicalMAC(value) { identity[key] = value }
+        }
+        return identity.count > 1 ? identity : nil
+    }
+
+    var controlIdentity: String? {
+        commandIdentity.map { identity in
+            ["expected_device", "expected_wifi_mac", "expected_ble_mac"].map { identity[$0] ?? "" }.joined(separator: "|")
+        }
+    }
+
     func isSameStation(as other: Self) -> Bool {
         guard name == other.name, ip == other.ip, port == other.port else { return false }
         for (left, right) in [(wifiMac, other.wifiMac), (bleMac, other.bleMac)] {
@@ -343,9 +357,9 @@ final class VenusStore: ObservableObject {
         enqueue(.discover(port))
     }
     func perform(_ action: VenusAction) {
-        guard configuration != nil, device != nil, isFresh, !commandBusy else { return }
+        guard configuration != nil, let device, device.commandIdentity != nil, isFresh, !commandBusy else { return }
         commandStatus = nil
-        enqueue(.command(action))
+        enqueue(.command(action, device))
     }
     func setRefreshInterval(_ value: Double) {
         guard [10.0, 30.0, 60.0].contains(value), var config = configuration else { return }
@@ -438,7 +452,7 @@ final class VenusStore: ObservableObject {
         return result
     }
 
-    private enum Job { case read, discover(Int), command(VenusAction) }
+    private enum Job { case read, discover(Int), command(VenusAction, VenusDiscoveredDevice) }
     private func enqueue(_ job: Job) {
         let previous = operation
         previous?.cancel(); activeAPI?.cancel()
@@ -458,7 +472,6 @@ final class VenusStore: ObservableObject {
             }
             do {
                 let config = self.configuration
-                let name = self.device?.name
                 let data = try await withTaskCancellationHandler(operation: {
                     try await Task.detached(priority: .utility) {
                         switch job {
@@ -466,10 +479,11 @@ final class VenusStore: ObservableObject {
                             guard let config else { throw VenusStoreError.message(VL("Немає підключення.", "No connection.")) }
                             return try api.read(ip: config.ip, port: config.port)
                         case .discover(let selectedPort): return try api.discover(port: selectedPort)
-                        case .command(let action):
-                            guard let config, let name else { throw VenusStoreError.message(VL("Станцію не визначено.", "Station not identified.")) }
+                        case .command(let action, let selectedDevice):
+                            guard let identity = selectedDevice.commandIdentity else { throw VenusStoreError.message(VL("Станцію не визначено.", "Station not identified.")) }
                             var command = action.parameters
-                            command["ip"] = config.ip; command["port"] = config.port; command["expected_device"] = name
+                            command["ip"] = selectedDevice.ip; command["port"] = selectedDevice.port
+                            for (key, value) in identity { command[key] = value }
                             return try api.command(command)
                         }
                     }.value
@@ -499,7 +513,7 @@ final class VenusStore: ObservableObject {
                     self.warning = envelope.errors?.first?.message
                     do { try self.persistReading(device: device, report: combined) }
                     catch { self.warning = VL("Не вдалося зберегти останні показники на Mac.", "Could not save the latest readings on this Mac.") }
-                case .command(let action):
+                case .command(let action, _):
                     self.commandStatus = envelope.verified == true ? VL("Новий режим підтверджено станцією.", "The station confirmed the new mode.") : VL("API прийняв команду. Поточний фізичний стан ще не підтверджено.", "The API accepted the command. The actual physical state is still unconfirmed.")
                     if case .factoryReset = action {
                         self.pause()
@@ -689,6 +703,12 @@ final class VenusStore: ObservableObject {
         }
         let canonicalDevice = try station(mac: "02:00:00:00:00:01")
         try require(device.isSameStation(as: canonicalDevice), "Canonical MAC comparison regression")
+        try require(device.commandIdentity == canonicalDevice.commandIdentity && device.controlIdentity == canonicalDevice.controlIdentity,
+                    "Command and confirmation identity uses canonical MACs")
+        try require(device.controlIdentity != (try station(mac: "020000000002")).controlIdentity,
+                    "Reset confirmation changes when the selected station changes")
+        try require((try station(mac: nil)).commandIdentity == nil && (try station(mac: "000000000000")).commandIdentity == nil,
+                    "Unidentified stations remain read-only")
         try require(VenusModel.identify("VNSA-0") == .venusA && VenusModel.identify("VenusE 3.0") == .venusE, "Model regression")
         var rejected = false
         do { try sample(["soc_percent": 101]).validate() } catch { rejected = true }

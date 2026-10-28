@@ -294,6 +294,13 @@ final class VenusAPI: @unchecked Sendable {
         return string
     }
 
+    static func canonicalMAC(_ value: String?) -> String? {
+        guard let raw = value, let valid = mac(raw) else { return nil }
+        let canonical = valid.replacingOccurrences(of: ":", with: "").lowercased()
+        guard canonical != "000000000000", canonical != "ffffffffffff" else { return nil }
+        return canonical
+    }
+
     private static func validTime(_ value: String) -> Bool {
         value.range(of: #"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"#, options: .regularExpression) != nil
     }
@@ -408,6 +415,7 @@ final class VenusAPI: @unchecked Sendable {
         let port: Int
         let action: String
         let expected: String?
+        let expectedMACs: [String: String]
         let mode: String?
         let power: Int?
         let method: String
@@ -421,7 +429,7 @@ final class VenusAPI: @unchecked Sendable {
             "set_bluetooth_advertising": ["value"], "set_power_version": ["value"],
             "set_passive": ["power", "seconds"], "set_schedule": ["slot", "start", "end", "weekmask", "power", "enabled"],
             "factory_reset": ["keep_energy", "confirmed"]]
-        guard let fields = specific[action], Set(input.keys).isSubset(of: fields.union(["ip", "port", "action", "expected_device"])) else {
+        guard let fields = specific[action], Set(input.keys).isSubset(of: fields.union(["ip", "port", "action", "expected_device", "expected_wifi_mac", "expected_ble_mac"])) else {
             throw APIError("invalid_command", VL("Команда містить невідомі або зайві параметри.", "The command contains unknown or extra parameters."))
         }
         let port = input["port"] == nil ? 30000 : integer(input["port"])
@@ -430,6 +438,16 @@ final class VenusAPI: @unchecked Sendable {
         let hasExpected = input["expected_device"] != nil && !(input["expected_device"] is NSNull)
         let expected = hasExpected ? ascii(input["expected_device"], limit: 64) : nil
         if hasExpected && expected == nil { throw APIError("invalid_command", VL("Некоректна очікувана модель Marstek.", "Invalid expected Marstek model.")) }
+        var expectedMACs: [String: String] = [:]
+        for key in ["wifi_mac", "ble_mac"] where input["expected_" + key] != nil {
+            guard let value = canonicalMAC(input["expected_" + key] as? String) else {
+                throw APIError("invalid_command", VL("Некоректний ідентифікатор обраної станції.", "Invalid selected station identifier."))
+            }
+            expectedMACs[key] = value
+        }
+        guard !expectedMACs.isEmpty else {
+            throw APIError("identity_required", VL("Для керування потрібен ідентифікатор Wi-Fi або Bluetooth станції. Онови підключення.", "Station controls require a Wi-Fi or Bluetooth identifier. Refresh the connection."))
+        }
         var method: String
         var params: [String: Any]
         var mode: String?
@@ -486,12 +504,15 @@ final class VenusAPI: @unchecked Sendable {
             default: throw APIError("unsupported_action", VL("Ця команда Marstek не підтримується застосунком.", "This Marstek command is not supported by the app."))
             }
         }
-        return Plan(ip: ip, port: port, action: action, expected: expected, mode: mode, power: requestedPower, method: method, params: params)
+        return Plan(ip: ip, port: port, action: action, expected: expected, expectedMACs: expectedMACs, mode: mode, power: requestedPower, method: method, params: params)
     }
 
     private static func authorize(_ plan: Plan, device: [String: Any]) throws {
         let name = device["name"] as? String ?? ""
         guard plan.expected == nil || plan.expected == name else { throw APIError("identity_changed", VL("Модель відповіді не збігається з обраним пристроєм.", "The response model does not match the selected device.")) }
+        guard plan.expectedMACs.allSatisfy({ canonicalMAC(device[$0.key] as? String) == $0.value }) else {
+            throw APIError("identity_changed", VL("На цій IP-адресі відповіла інша станція або її ідентифікатор недоступний. Команду не надіслано; перевір підключення.", "A different station responded at this IP address, or its identifier is unavailable. The command was not sent; check the connection."))
+        }
         guard e3Names.contains(name) || aNames.contains(name) else { throw APIError("unsupported_device", VL("Команди доступні лише для Venus E3 та Venus A.", "Commands are available only for Venus E3 and Venus A.")) }
         if ["set_dod", "set_led", "set_bluetooth_advertising", "set_power_version", "factory_reset"].contains(plan.action) {
             guard let firmware = integer(device["firmware"]), firmware >= 150 else { throw APIError("unsupported_feature", VL("Це налаштування потребує прошивки 150 або новішої.", "This setting requires firmware 150 or later.")) }
@@ -879,6 +900,14 @@ final class VenusAPI: @unchecked Sendable {
             if try !condition() { throw APIError("selfcheck_failed", VL("Перевірка автономного Venus API не пройшла.", "The offline Venus API self-check failed.")) }
         }
         func rejected(_ body: () throws -> Void) -> Bool { do { try body(); return false } catch { return true } }
+        func checkedPlan(_ input: [String: Any]) throws -> Plan {
+            var identified = input
+            identified["expected_wifi_mac"] = "02:00:00:00:00:01"
+            return try commandPlan(identified)
+        }
+        func controlDevice(_ name: String, firmware: Int) -> [String: Any] {
+            ["name": name, "firmware": firmware, "wifi_mac": "020000000001"]
+        }
         try require(discoveryAttempts == 2 && discoveryWindow == 5)
         try require(responseTimeout(method: "Marstek.GetDevice") == 5 && responseTimeout(method: "ES.GetStatus") == 2)
         try require(sendDelay(lastSend: nil, lastResponse: nil, now: 10) == 0)
@@ -911,18 +940,19 @@ final class VenusAPI: @unchecked Sendable {
             ["device": "VenusA", "version": "150", "ver": 149],
             ["device": "VenusA", "ip": "192.168.50.43"]
         ] { try require(rejected { _ = try device(malformed) }) }
-        let systemPlan = try commandPlan(["ip": "192.168.50.42", "action": "set_led", "value": true])
+        let systemPlan = try checkedPlan(["ip": "192.168.50.42", "action": "set_led", "value": true])
         for unknownVersion: [String: Any] in [
             ["device": "VenusE3.0"], ["device": "VenusE3.0", "version": "v150beta"],
             ["device": "VenusE3.0", "version": "unknown", "ver": 150],
             ["device": "VenusE3.0", "version": NSNull()]
         ] {
-            let parsed = try device(unknownVersion)
+            var knownStation = unknownVersion; knownStation["wifi_mac"] = "020000000001"
+            let parsed = try device(knownStation)
             try require(parsed["firmware"] == nil)
             try require(rejected { try authorize(systemPlan, device: parsed) })
         }
-        try authorize(systemPlan, device: device(["device_type": "VenusE3.0", "version": "150"]))
-        let unsupported = try device(["device_type": "UnknownFutureModel", "version": "150"])
+        try authorize(systemPlan, device: device(["device_type": "VenusE3.0", "version": "150", "wifi_mac": "020000000001"]))
+        let unsupported = try device(["device_type": "UnknownFutureModel", "version": "150", "wifi_mac": "020000000001"])
         try require(!e3Names.contains(unsupported["name"] as! String) && !aNames.contains(unsupported["name"] as! String))
         try require(rejected { try authorize(systemPlan, device: unsupported) })
         let exactReads = ["Marstek.GetDevice", "ES.GetStatus", "Bat.GetStatus", "ES.GetMode", "EM.GetStatus", "Wifi.GetStatus", "BLE.GetStatus", "PV.GetStatus"]
@@ -1019,33 +1049,57 @@ final class VenusAPI: @unchecked Sendable {
         try require(invalidNetwork.values["ct_phase_a_w"] == nil && invalidNetwork.values["ct_input_wh"] == nil)
         try require(invalidNetwork.values["ct_connected"] == nil && invalidNetwork.values["bluetooth_connected"] == nil)
         try require(invalidNetwork.values["wifi_ip"] == nil && invalidNetwork.values["wifi_rssi_dbm"] == nil)
+        let selectedIdentity: [String: Any] = ["ip": "10.0.0.1", "action": "factory_reset", "keep_energy": true,
+            "confirmed": true, "expected_device": "VenusE3.0", "expected_wifi_mac": "02:AB:00:00:00:01", "expected_ble_mac": "020000000002"]
+        let selectedPlan = try commandPlan(selectedIdentity)
+        let sameStation: [String: Any] = ["name": "VenusE3.0", "firmware": 150,
+            "wifi_mac": "02ab00000001", "ble_mac": "02:00:00:00:00:02"]
+        try authorize(selectedPlan, device: sameStation)
+        for (key, value): (String, Any) in [("wifi_mac", "020000000003"), ("ble_mac", "020000000003"),
+                                          ("wifi_mac", NSNull()), ("ble_mac", NSNull())] {
+            var changed = sameStation; changed[key] = value
+            try require(rejected { try authorize(selectedPlan, device: changed) })
+        }
+        for key in ["wifi_mac", "ble_mac"] {
+            var missing = sameStation; missing.removeValue(forKey: key)
+            try require(rejected { try authorize(selectedPlan, device: missing) })
+        }
+        for value: Any in [NSNull(), true, "bad", "000000000000", "ff:ff:ff:ff:ff:ff"] {
+            var invalid = selectedIdentity; invalid["expected_wifi_mac"] = value
+            try require(rejected { _ = try commandPlan(invalid) })
+        }
+        var noIdentity = selectedIdentity
+        noIdentity.removeValue(forKey: "expected_wifi_mac"); noIdentity.removeValue(forKey: "expected_ble_mac")
+        try require(rejected { _ = try commandPlan(noIdentity) })
+        var bleOnly = selectedIdentity; bleOnly.removeValue(forKey: "expected_wifi_mac")
+        try authorize(commandPlan(bleOnly), device: sameStation)
         for model in ["VenusE3.0", "VenusA"] {
-            let device: [String: Any] = ["name": model, "firmware": 150]
+            let device: [String: Any] = controlDevice(model, firmware: 150)
             for action in ["set_dod", "set_led", "set_bluetooth_advertising"] {
-                let plan = try commandPlan(["ip": "10.0.0.1", "action": action, "value": action == "set_dod" ? 30 : true])
+                let plan = try checkedPlan(["ip": "10.0.0.1", "action": action, "value": action == "set_dod" ? 30 : true])
                 try authorize(plan, device: device)
-                try require(rejected { try authorize(plan, device: ["name": model, "firmware": 149]) })
+                try require(rejected { try authorize(plan, device: controlDevice(model, firmware: 149)) })
             }
             for power in [800, 1200, 1500, 2500] {
-                let plan = try commandPlan(["ip": "10.0.0.1", "action": "set_power_version", "value": power])
+                let plan = try checkedPlan(["ip": "10.0.0.1", "action": "set_power_version", "value": power])
                 let allowed = model == "VenusA" ? [800, 1200, 1500].contains(power) : [800, 2500].contains(power)
                 try require(rejected { try authorize(plan, device: device) } != allowed)
             }
         }
-        for value in [true, 29, 89, 30.0, "30"] as [Any] { try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "set_dod", "value": value]) }) }
-        try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "Reset.Factory"]) })
-        try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "set_mode", "mode": "Passive"]) })
+        for value in [true, 29, 89, 30.0, "30"] as [Any] { try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "set_dod", "value": value]) }) }
+        try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "Reset.Factory"]) })
+        try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "set_mode", "mode": "Passive"]) })
         for model in ["VenusE3.0", "VenusA"] {
             let maximum = model == "VenusA" ? 1500 : 2500
             for power in [-maximum, 0, maximum] {
-                let passive = try commandPlan(["ip": "10.0.0.1", "action": "set_passive", "power": power, "seconds": 86400])
-                try authorize(passive, device: ["name": model, "firmware": 149]) // ES is not a FW150-only SYS feature.
+                let passive = try checkedPlan(["ip": "10.0.0.1", "action": "set_passive", "power": power, "seconds": 86400])
+                try authorize(passive, device: controlDevice(model, firmware: 149)) // ES is not a FW150-only SYS feature.
                 let config = passive.params["config"] as! [String: Any]
                 try require(integer((config["passive_cfg"] as? [String: Any])?["power"]) == power)
                 for slot in [0, 9] {
-                    let schedule = try commandPlan(["ip": "10.0.0.1", "action": "set_schedule", "slot": slot,
+                    let schedule = try checkedPlan(["ip": "10.0.0.1", "action": "set_schedule", "slot": slot,
                         "start": "23:00", "end": "06:00", "weekmask": 127, "power": power, "enabled": false])
-                    try authorize(schedule, device: ["name": model, "firmware": 149])
+                    try authorize(schedule, device: controlDevice(model, firmware: 149))
                     let config = schedule.params["config"] as! [String: Any]
                     let object = config["manual_cfg"] as? [String: Any]
                     try require(object != nil && integer(object?["time_num"]) == slot && integer(object?["enable"]) == 0)
@@ -1053,31 +1107,31 @@ final class VenusAPI: @unchecked Sendable {
                 }
             }
             for keep in [true, false] {
-                let reset = try commandPlan(["ip": "10.0.0.1", "action": "factory_reset", "keep_energy": keep, "confirmed": true])
-                try authorize(reset, device: ["name": model, "firmware": 150])
+                let reset = try checkedPlan(["ip": "10.0.0.1", "action": "factory_reset", "keep_energy": keep, "confirmed": true])
+                try authorize(reset, device: controlDevice(model, firmware: 150))
                 try require(reset.method == "Reset.Factory" && integer(reset.params["type"]) == (keep ? 2 : 1))
-                try require(rejected { try authorize(reset, device: ["name": model, "firmware": 149]) })
+                try require(rejected { try authorize(reset, device: controlDevice(model, firmware: 149)) })
             }
         }
-        let excessiveA = try commandPlan(["ip": "10.0.0.1", "action": "set_passive", "power": 1501, "seconds": 1])
-        try require(rejected { try authorize(excessiveA, device: ["name": "VenusA", "firmware": 150]) })
+        let excessiveA = try checkedPlan(["ip": "10.0.0.1", "action": "set_passive", "power": 1501, "seconds": 1])
+        try require(rejected { try authorize(excessiveA, device: controlDevice("VenusA", firmware: 150)) })
         for seconds in [0, 86401, 1.0, true] as [Any] {
-            try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "set_passive", "power": 0, "seconds": seconds]) })
+            try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "set_passive", "power": 0, "seconds": seconds]) })
         }
         for power in [-2501, 2501, true, 100.0] as [Any] {
-            try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "set_passive", "power": power, "seconds": 300]) })
+            try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "set_passive", "power": power, "seconds": 300]) })
         }
         let validSchedule: [String: Any] = ["ip": "10.0.0.1", "action": "set_schedule", "slot": 0, "start": "00:00", "end": "23:59", "weekmask": 1, "power": 0, "enabled": true]
         for (key, bad): (String, Any) in [("slot", 10), ("slot", true), ("start", "24:00"), ("start", "8:30"), ("end", "12:60"),
                                          ("weekmask", 0), ("weekmask", 128), ("enabled", 1), ("power", 2501)] {
             var invalid = validSchedule; invalid[key] = bad
-            try require(rejected { _ = try commandPlan(invalid) })
+            try require(rejected { _ = try checkedPlan(invalid) })
         }
         for confirmed in [false, 1, "true", NSNull()] as [Any] {
-            try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "factory_reset", "keep_energy": true, "confirmed": confirmed]) })
+            try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "factory_reset", "keep_energy": true, "confirmed": confirmed]) })
         }
-        try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "factory_reset", "confirmed": true]) })
-        try require(rejected { _ = try commandPlan(["ip": "10.0.0.1", "action": "set_led", "value": true, "confirmed": true]) })
+        try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "factory_reset", "confirmed": true]) })
+        try require(rejected { _ = try checkedPlan(["ip": "10.0.0.1", "action": "set_led", "value": true, "confirmed": true]) })
         let api = VenusAPI()
         api.cancel()
         try require(rejected { try api.check(0) })

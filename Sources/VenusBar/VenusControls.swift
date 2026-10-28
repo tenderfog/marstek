@@ -23,9 +23,9 @@ struct VenusControls: View {
     @State private var confirmedEndpoint = ""
     @State private var inputError: String?
 
-    private var canSend: Bool { store.isFresh && !store.commandBusy && store.model != .unknown }
+    private var canSend: Bool { store.isFresh && !store.commandBusy && store.model != .unknown && store.device?.controlIdentity != nil }
     private var capacity: Int { store.model == .venusA ? 1500 : store.model == .venusE ? 2500 : 0 }
-    private var endpoint: String { "\(store.model.rawValue)|\(store.ip):\(store.port)" }
+    private var endpoint: String { "\(store.model.rawValue)|\(store.ip):\(store.port)|\(store.device?.controlIdentity ?? "")" }
     private var weekdays: [String] { [VL("Пн", "Mo"), VL("Вт", "Tu"), VL("Ср", "We"), VL("Чт", "Th"), VL("Пт", "Fr"), VL("Сб", "Sa"), VL("Нд", "Su")] }
 
     var body: some View {
@@ -230,10 +230,16 @@ struct VenusControls: View {
         HStack(alignment: .top, spacing: 8) {
             if store.commandBusy { ProgressView() }
             else { Image(systemName: inputError == nil ? "info.circle" : "exclamationmark.circle").font(.system(size: 12)) }
-            Text(inputError ?? store.commandStatus ?? (!store.isFresh ? VL("Для команд потрібна свіжа відповідь станції.", "A fresh station response is required for commands.") : VL("Підтвердження API означає прийняття команди; фізичний стан може відрізнятися.", "API confirmation means the command was accepted; the physical state may differ.")))
+            Text(inputError ?? store.commandStatus ?? controlNotice)
                 .font(.system(size: 12)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                 .help(inputError ?? store.commandStatus ?? "")
         }.foregroundStyle(.white.opacity(0.6)).frame(minHeight: 28, alignment: .top)
+    }
+
+    private var controlNotice: String {
+        if !store.isFresh { return VL("Для команд потрібна свіжа відповідь станції.", "A fresh station response is required for commands.") }
+        if store.device?.controlIdentity == nil { return VL("Станція не повернула ідентифікатор Wi-Fi або Bluetooth. Показники доступні, керування поки вимкнено.", "The station did not return a Wi-Fi or Bluetooth identifier. Readings are available; controls are disabled.") }
+        return VL("Підтвердження API означає прийняття команди; фізичний стан може відрізнятися.", "API confirmation means the command was accepted; the physical state may differ.")
     }
 
     private var separator: some View { Rectangle().fill(.white.opacity(0.08)).frame(height: 1) }

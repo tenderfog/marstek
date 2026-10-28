@@ -1,25 +1,129 @@
-# Building and releasing
+# Оновлення VenusBar
 
-Pushes, pull requests, and **Actions → Build VenusBar → Run workflow** build a
-universal macOS app and run its offline self-checks. The `VenusBar-universal`
-artifact contains `VenusBar.zip` and `SHA256SUMS.txt` and is retained for 30 days.
-Downloading workflow artifacts requires a GitHub login.
+## Для користувачів
 
-To publish an alpha, push a new version tag such as `v0.1.0-alpha.1` on the commit
-you intend to release. After the build passes, a separate job publishes a GitHub
-**prerelease** with the ZIP and checksum. Branch pushes, pull requests, and manual
-workflow runs never publish a release. Existing releases are not overwritten;
-use a new tag for a new build.
+Починаючи зі збірки 4, VenusBar використовує [Sparkle 2](https://sparkle-project.org/).
+Першу таку версію потрібно встановити вручну: розпакувати `VenusBar.zip`, перенести
+`VenusBar.app` у **Програми** й відкрити. У попередніх збірках оновлювача немає.
 
-On macOS, verify a download with `shasum -a 256 -c SHA256SUMS.txt` from the folder
-containing both files. Checksums detect a changed download; they do not replace
-Apple signing or notarization. Current builds use ad hoc signing and may require
-approval in macOS Privacy & Security. No station data, connection settings, or
-credentials are included in the app.
+Наступні версії доступні в **Налаштування → Оновлення застосунку**. Кнопка
+**Перевірити оновлення** запускає перевірку одразу; автоматичну перевірку раз на
+добу можна вимкнути. Коли є нова версія, у налаштуваннях з’являється позначка.
+Sparkle показує зміни й пропонує завантаження, встановлення та перезапуск.
+Встановлення потребує вибору користувача.
 
-The build job has read-only repository access. Only the tag-only publication job
-has `contents: write`, using GitHub's temporary `GITHUB_TOKEN`; no personal token
-or Apple signing secret is needed. Official actions are pinned to verified release
-commits: [checkout v7.0.1](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)
-and [upload-artifact v7.0.2](https://github.com/actions/upload-artifact/commit/cf430e030ddbb5b0abf93d22962f4752f3646cd9).
-Review and update these pins when adopting newer releases.
+Підключення до станції, адреса, історія, мова та параметри сповіщень зберігаються
+окремо від `.app`, тому заміна застосунку їх не скидає. Оновлювач не передає ці
+дані на GitHub. Для перевірки та завантаження потрібен інтернет;
+обліковий запис GitHub користувачеві не потрібен.
+
+## Підписи та перший запуск
+
+Архів і стрічка оновлень підписуються ключем Sparkle EdDSA. У застосунок вбудовано
+лише відкритий ключ із `Config/UpdatePublicKey.txt`. Перевірка відбувається до
+розпакування архіву; непідписана чи змінена стрічка або архів відхиляються.
+Стрічка завжди має бути підписаною, без таймера переходу до неперевіреної стрічки.
+Дивіться [офіційну схему захисту Sparkle](https://sparkle-project.org/documentation/).
+
+Цей підпис **не замінює Apple Developer ID і нотаризацію**. Поточні тестові збірки
+мають ad hoc підпис, тому macOS може блокувати їх відкриття на іншому Mac.
+Для звичайного розповсюдження потрібні Developer ID, підписання вкладених
+компонентів Sparkle, нотаризація та stapling. У поточній публікації цього ще немає.
+Не вимикайте Gatekeeper глобально. Дивіться
+[пояснення Apple щодо перевірки застосунків](https://support.apple.com/uk-ua/102445).
+
+## Де зберігається ключ
+
+Приватний ключ знаходиться тільки у В’язці ключів Mac розробника, обліковий запис
+`tenderfog.VenusBar`. Він **не експортується в GitHub Secrets**, Git або артефакти.
+Збережіть його захищену резервну копію: новий випадковий ключ не зможе оновлювати
+вже встановлені копії. Перегляд відкритого ключа:
+
+```sh
+sparkle_path=$(zsh scripts/fetch_sparkle.sh)
+"$sparkle_path/bin/generate_keys" --account tenderfog.VenusBar -p
+```
+
+[Інструкція Sparkle про резервування та ротацію ключів](https://sparkle-project.org/documentation/#eddsa-ed25519-signatures).
+
+## Випуск нової версії через SSH
+
+1. Змініть `Config/Release.json`, збільшивши числовий `build`. Після
+   `{"version":"0.1","build":4}` наступна збірка має номер 5. `build` завжди
+   зростає, навіть коли видимий номер `version` залишається тим самим.
+2. Завершіть перевірки, зробіть commit і push коду в `main`. Дочекайтеся успішного
+   **Build VenusBar** саме для цього commit.
+3. Завантажте його артефакт `VenusBar-universal` та розпакуйте в окрему папку.
+   У ній мають бути `VenusBar.zip` і `SHA256SUMS.txt`. Не перебудовуйте ZIP локально:
+   підписується й публікується той самий перевірений CI-архів.
+4. Підготуйте текст змін і виконайте:
+
+   ```sh
+   zsh scripts/prepare_update.sh \
+     --artifact-dir /absolute/path/to/ci-artifact \
+     --run-id 123456789 \
+     --source-commit FULL_40_CHARACTER_COMMIT_SHA \
+     --notes-file /absolute/path/to/release-notes.txt
+   ```
+
+   `--notes-file` необов’язковий; використовуйте короткий зрозумілий текст для
+   користувачів. Інструмент перевірить контрольну суму й метадані застосунку,
+   підпише ZIP та appcast через В’язку ключів і створить тільки два текстові файли:
+   `releases/current/manifest.json` та `releases/current/appcast.xml`.
+5. Перегляньте ці файли, зробіть commit і push через наявний SSH-доступ. Це запускає
+   **Publish VenusBar update**. Для повторного запуску доступний `workflow_dispatch`.
+   Вхід у GitHub через браузер і новий приватний ключ на GitHub не потрібні.
+
+Маніфест прив’язує підписаний ZIP до номера версії, build, commit коду, номера CI
+run, імені артефакту й SHA-256. Workflow перевіряє, що run належить цьому репозиторію,
+успішно завершив `build.yml` у `main` для зазначеного commit і не походить із pull
+request. Потім він завантажує артефакт із цього run, перевіряє підписи ZIP та стрічки
+через CryptoKit **лише відкритим ключем**, а вже після цього розпаковує застосунок
+і перевіряє його версію, bundle ID, ключ, налаштування захисту та обидві архітектури.
+Приватний ключ у CI не потрібен.
+
+Тег має вигляд `v0.1-build4` та вказує на commit коду, з якого зібрано архів.
+`VenusBar.zip`, `appcast.xml` і `SHA256SUMS.txt` спочатку завантажуються в чернетку;
+лише після завершення вона стає публічною та **Latest**. Workflow не перезаписує
+теги й релізи та відхиляє build, що не перевищує попередні видані збірки.
+Якщо публікація обірвалася після створення чернетки, перевірте її перед повтором.
+Видалення незавершеної чернетки/невиданого тега — окрема дія адміністратора;
+уже опублікований build повторно не використовуйте.
+
+Стала адреса стрічки:
+
+```
+https://github.com/tenderfog/marstek/releases/latest/download/appcast.xml
+```
+
+GitHub Release навмисно має тип звичайного релізу, навіть із позначкою `alpha` в
+заголовку: `/releases/latest/` не обирає GitHub prerelease. Не позначайте виданий
+реліз як prerelease, не підміняйте його ZIP або appcast і не перемикайте **Latest**
+на реліз без цих файлів. Автоматична перевірка побачить нову версію під час
+наступного циклу; ручна доступна після публікації, з урахуванням кешу GitHub.
+
+## Звичайні збірки та перевірка
+
+`zsh scripts/build_venusbar.sh` створює `build/VenusBar.app` і `build/VenusBar.zip`.
+Sparkle завантажується у зафіксованій версії з перевіркою SHA-256 із
+`Config/Sparkle.json`. ZIP створюється через `ditto`, зі збереженням символічних
+посилань фреймворка. Pushes, pull requests і **Build VenusBar → Run workflow**
+виконують збірку та офлайн-тести; артефакти зберігаються 30 днів. Звичайні зміни
+коду без зміни `releases/current/` не запускають публікацію.
+
+Публікація має тільки `actions: read` і `contents: write`; звичайна збірка —
+`contents: read`. Перевірку можна повторити локально на Mac:
+
+```sh
+swift scripts/verify_update.swift Config/UpdatePublicKey.txt /path/VenusBar.zip \
+  releases/current/appcast.xml releases/current/manifest.json
+```
+
+Перед широким випуском перевірте встановлення між двома збірками на окремому Mac:
+збереження налаштувань, відсутність нової версії, втрату інтернету, скасування,
+перезапуск після встановлення та відхилення зміненого архіву. Компіляція й перевірка
+підписів самі по собі не підтверджують запуск завантаженого застосунку Gatekeeper.
+
+Використано офіційний [формат публікації Sparkle](https://sparkle-project.org/documentation/publishing/).
+Дії GitHub зафіксовані за commit: [checkout v7.0.1](https://github.com/actions/checkout/commit/3d3c42e5aac5ba805825da76410c181273ba90b1)
+та [upload-artifact v7.0.2](https://github.com/actions/upload-artifact/commit/cf430e030ddbb5b0abf93d22962f4752f3646cd9).

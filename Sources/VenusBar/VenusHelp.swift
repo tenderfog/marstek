@@ -75,22 +75,84 @@ struct VenusHelp: View {
 struct VenusLocalAPIHelpLink: View {
     @ObservedObject private var localization = VenusLocalization.shared
     let model: VenusModel
-    private var title: String { VL("Як увімкнути Local API ↗", "Enable Local API ↗") }
+    @State private var guideShown = false
 
     var body: some View {
-        Group {
-            if model == .unknown {
-                Menu(title) {
-                    Link("Venus E 3.0", destination: url(for: .venusE))
-                    Link("Venus A", destination: url(for: .venusA))
-                }.menuStyle(.borderlessButton).fixedSize()
-            } else {
-                Link(title, destination: url(for: model))
+        Button { guideShown = true } label: {
+            Label(VL("Інструкція: де знайти IP і порт", "Guide: where to find IP and port"), systemImage: "questionmark.circle")
+                .font(.system(size: 12, weight: .medium))
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.72))
+            .popover(isPresented: $guideShown, arrowEdge: .bottom) {
+                VenusConnectionGuide { guideShown = false }
             }
-        }.font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
+    }
+}
+
+struct VenusConnectionHints: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(VL("IP-адреса: MARSTEK → станція → ⚙ → Wi-Fi / IP.", "IP address: MARSTEK → station → ⚙ → Wi-Fi / IP."))
+            Text(VL("Порт: налаштування станції → Local API → Ports.", "Port: station settings → Local API → Ports."))
+        }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct VenusConnectionGuide: View {
+    @ObservedObject private var localization = VenusLocalization.shared
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 17) {
+            HStack(alignment: .top) {
+                Text(VL("Де знайти IP і порт", "Where to find IP and port"))
+                    .font(.system(size: 18, weight: .semibold))
+                Spacer(minLength: 8)
+                Button(action: onClose) { Image(systemName: "xmark").frame(width: 28, height: 28) }
+                    .buttonStyle(.plain).accessibilityLabel(VL("Закрити інструкцію", "Close guide"))
+                    .keyboardShortcut(.cancelAction)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                guideStep("1", title: VL("Відкрий станцію в MARSTEK", "Open your station in MARSTEK"),
+                          text: VL("Натисни ⚙ та знайди IP-адресу в параметрах Wi-Fi або мережі. Введи її у VenusBar без змін.", "Tap ⚙ and find the IP address under Wi-Fi or network settings. Enter that address in VenusBar."))
+                guideStep("2", title: VL("Увімкни Local API", "Enable Local API"),
+                          text: VL("У тих самих налаштуваннях відкрий Local API, увімкни його та скопіюй число з Ports у поле «Порт». 30000 — лише стандартне значення.", "In the same settings, open Local API, enable it and copy the number from Ports into the Port field. 30000 is only the default."))
+            }
+            Text(VL("Mac і станція мають бути в одній локальній мережі. Назви пунктів у MARSTEK можуть відрізнятися.", "Your Mac and station must be on the same local network. Menu names in MARSTEK can vary."))
+                .font(.system(size: 12)).foregroundStyle(.white.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(VL("Офіційні інструкції MARSTEK · PDF", "Official MARSTEK guides · PDF"))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                instructionLink(.venusE, name: "Venus E3")
+                instructionLink(.venusA, name: "Venus A")
+            }
+        }.padding(22).frame(width: 390)
+            .foregroundStyle(.white).preferredColorScheme(.dark)
+            .environment(\.locale, localization.language.locale)
     }
 
-    private func url(for model: VenusModel) -> URL {
-        URL(string: "https://static-eu.marstekenergy.com/ems/resource/agreement/app/venus/\(model == .venusA ? "Venus_A" : "Venus_E3").pdf")!
+    private func guideStep(_ number: String, title: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number).font(.system(size: 12, weight: .semibold)).frame(width: 24, height: 24)
+                .background(Circle().fill(.white.opacity(0.1)))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(text).font(.system(size: 12)).foregroundStyle(.white.opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func instructionLink(_ model: VenusModel, name: String) -> some View {
+        Link(destination: URL(string: "https://static-eu.marstekenergy.com/ems/resource/agreement/app/venus/\(model == .venusA ? "Venus_A" : "Venus_E3").pdf")!) {
+            HStack {
+                Text(VL("Відкрити інструкцію \(name)", "Open \(name) guide"))
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+            }.frame(maxWidth: .infinity)
+        }.buttonStyle(VenusButtonStyle(compact: true))
     }
 }
