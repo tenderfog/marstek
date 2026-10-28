@@ -32,11 +32,21 @@ struct VenusHighLoadGate {
     }
 }
 
+struct VenusUpdateNoticeGate {
+    static func shouldNotify(_ release: VenusUpdateRelease, currentBuild: String, lastNotifiedBuild: String?,
+                             background: Bool, enabled: Bool, authorized: Bool) -> Bool {
+        guard background, enabled, authorized, release.isNewer(than: currentBuild),
+              let build = VenusUpdateRelease.buildNumber(release.build) else { return false }
+        return lastNotifiedBuild.flatMap(VenusUpdateRelease.buildNumber).map { build > $0 } ?? true
+    }
+}
+
 @MainActor
 final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = VenusNotificationsStore()
     @Published private(set) var masterEnabled: Bool
     @Published private(set) var highLoadEnabled: Bool
+    @Published private(set) var updateEnabled: Bool
     @Published private(set) var thresholdW: Double
     @Published private(set) var isRequestingPermission = false
     @Published private(set) var authorizationStatus: UNAuthorizationStatus?
@@ -52,17 +62,25 @@ final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificat
     private var deliveryTask: Task<Void, Never>?
     private var pendingRequestID: String?
     private static let requestID = "venusbar.high-load"
+    nonisolated private static let updateRequestPrefix = "venusbar.update."
+    private var updateDeliveryTask: Task<Void, Never>?
+    private var updateDeliveryGeneration = 0
+    private var pendingUpdateRequestID: String?
     private enum Key {
         static let master = "notifications.masterEnabled"
         static let highLoad = "notifications.highLoadEnabled"
         static let threshold = "notifications.highLoadThresholdW"
         static let lastAlert = "notifications.highLoadLastAlertAt"
+        static let update = "notifications.updateEnabled"
+        static let lastUpdate = "notifications.lastUpdateBuild"
     }
 
     var permissionDenied: Bool { authorizationStatus == .denied }
     var canDeliver: Bool {
-        masterEnabled && highLoadEnabled && !isRequestingPermission
-            && (authorizationStatus == .authorized || authorizationStatus == .provisional)
+        masterEnabled && highLoadEnabled && permissionAllowsDelivery
+    }
+    private var permissionAllowsDelivery: Bool {
+        !isRequestingPermission && (authorizationStatus == .authorized || authorizationStatus == .provisional)
     }
     var permissionStatus: String {
         if let error { return error }
@@ -81,6 +99,7 @@ final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificat
         self.center = center
         masterEnabled = defaults.bool(forKey: Key.master)
         highLoadEnabled = defaults.object(forKey: Key.highLoad) as? Bool ?? true
+        updateEnabled = defaults.object(forKey: Key.update) as? Bool ?? true
         let stored = defaults.object(forKey: Key.threshold) as? Double ?? 1000
         thresholdW = Self.threshold(stored)
         if let last = defaults.object(forKey: Key.lastAlert) as? Date, last <= Date() { gate.lastAlertAt = last }
@@ -94,6 +113,7 @@ final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificat
         generation += 1
         permissionTask?.cancel(); permissionTask = nil
         cancelDelivery()
+        cancelUpdateDelivery()
         isRequestingPermission = false
         masterEnabled = enabled
         defaults.set(enabled, forKey: Key.master)
@@ -128,6 +148,12 @@ final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificat
         defaults.set(enabled, forKey: Key.highLoad)
         gate.resetEpisode()
         cancelDelivery()
+    }
+
+    func setUpdateEnabled(_ enabled: Bool) {
+        updateEnabled = enabled
+        defaults.set(enabled, forKey: Key.update)
+        if !enabled { cancelUpdateDelivery() }
     }
 
     func setThresholdWatts(_ value: Double) {
@@ -202,9 +228,72 @@ final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificat
         pendingRequestID = nil
     }
 
+    /// Only Sparkle's valid-update callback supplies this release; cached/offline state never alerts.
+    func notifyUpdate(_ release: VenusUpdateRelease, currentBuild: String, background: Bool) {
+        guard updateDeliveryTask == nil,
+              VenusUpdateNoticeGate.shouldNotify(release, currentBuild: currentBuild,
+                  lastNotifiedBuild: defaults.string(forKey: Key.lastUpdate), background: background,
+                  enabled: masterEnabled && updateEnabled, authorized: permissionAllowsDelivery) else { return }
+        let token = updateDeliveryGeneration
+        let requestID = Self.updateRequestPrefix + release.build
+        let content = UNMutableNotificationContent()
+        content.title = VL("Оновлення VenusBar", "VenusBar update")
+        content.body = VL("Доступна версія \(release.version), збірка \(release.build). Натисни, щоб завантажити й установити.",
+                          "Version \(release.version), build \(release.build) is available. Click to download and install.")
+        content.sound = .default
+        content.userInfo = ["venusbar.action": "update"]
+        pendingUpdateRequestID = requestID
+        updateDeliveryTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if token == self.updateDeliveryGeneration { self.updateDeliveryTask = nil; self.pendingUpdateRequestID = nil }
+            }
+            guard !Task.isCancelled, token == self.updateDeliveryGeneration,
+                  self.masterEnabled, self.updateEnabled, self.permissionAllowsDelivery else { return }
+            do {
+                try await self.center.add(UNNotificationRequest(identifier: requestID, content: content, trigger: nil))
+                guard !Task.isCancelled, token == self.updateDeliveryGeneration,
+                      self.masterEnabled, self.updateEnabled, self.permissionAllowsDelivery else {
+                    self.center.removePendingNotificationRequests(withIdentifiers: [requestID])
+                    self.center.removeDeliveredNotifications(withIdentifiers: [requestID])
+                    return
+                }
+                self.defaults.set(release.build, forKey: Key.lastUpdate)
+            } catch {
+                guard !Task.isCancelled, token == self.updateDeliveryGeneration else { return }
+                self.error = VL("Не вдалося показати сповіщення. Перевір дозвіл macOS.", "Could not show the notification. Check macOS permission.")
+                self.refreshPermission()
+            }
+        }
+    }
+
+    private func cancelUpdateDelivery() {
+        updateDeliveryGeneration += 1
+        updateDeliveryTask?.cancel(); updateDeliveryTask = nil
+        if let pendingUpdateRequestID { center.removePendingNotificationRequests(withIdentifiers: [pendingUpdateRequestID]) }
+        pendingUpdateRequestID = nil
+    }
+
+    func dismissUpdateNotice(build: String) {
+        let requestID = Self.updateRequestPrefix + build
+        if pendingUpdateRequestID == requestID { cancelUpdateDelivery() }
+        center.removePendingNotificationRequests(withIdentifiers: [requestID])
+        center.removeDeliveredNotifications(withIdentifiers: [requestID])
+    }
+
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .list, .sound])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           response.notification.request.identifier.hasPrefix(Self.updateRequestPrefix),
+           response.notification.request.content.userInfo["venusbar.action"] as? String == "update" {
+            Task { @MainActor in VenusUpdates.shared.checkForUpdates() }
+        }
+        completionHandler()
     }
 
     private static func threshold(_ value: Double) -> Double {
@@ -239,5 +328,15 @@ final class VenusNotificationsStore: NSObject, ObservableObject, UNUserNotificat
         try check(lowThreshold.evaluate(watts: 201, observedAt: now, fresh: true, restored: false, thresholdW: 200, now: now), "custom threshold")
         try check(!lowThreshold.evaluate(watts: 151, observedAt: now.addingTimeInterval(301), fresh: true, restored: false, thresholdW: 200, now: now.addingTimeInterval(301)), "minimum 50W hysteresis")
         try check(!lowThreshold.evaluate(watts: 201, observedAt: now.addingTimeInterval(302), fresh: true, restored: false, thresholdW: 200, now: now.addingTimeInterval(302)), "not rearmed above low threshold boundary")
+        let release = VenusUpdateRelease(version: "0.1", build: "5")
+        func updateNotice(_ last: String? = nil, background: Bool = true, enabled: Bool = true, authorized: Bool = true) -> Bool {
+            VenusUpdateNoticeGate.shouldNotify(release, currentBuild: "4", lastNotifiedBuild: last,
+                                              background: background, enabled: enabled, authorized: authorized)
+        }
+        try check(updateNotice(), "valid background update can notify")
+        try check(!updateNotice("5") && !updateNotice("6") && updateNotice("3"), "one notice per newer build")
+        try check(!updateNotice(background: false) && !updateNotice(enabled: false) && !updateNotice(authorized: false), "manual checks and disabled or unauthorized alerts suppressed")
+        try check(!VenusUpdateNoticeGate.shouldNotify(release, currentBuild: "5", lastNotifiedBuild: nil,
+                                                     background: true, enabled: true, authorized: true), "installed release does not notify")
     }
 }

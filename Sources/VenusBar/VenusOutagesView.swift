@@ -238,7 +238,7 @@ struct VenusOutagesSettings: View {
                 Text(VL("Графіки відключень", "Outage schedules")).font(.system(size: 17, weight: .semibold))
                 Spacer(minLength: 0)
             }.frame(height: 44)
-            ScrollView {
+            VenusVerticalScroll {
                 VStack(alignment: .leading, spacing: 16) {
                     if store.selection != nil { savedSchedule }
                     addressForm
@@ -256,7 +256,7 @@ struct VenusOutagesSettings: View {
                             .foregroundStyle(.white.opacity(0.45))
                     }.font(.system(size: 10))
                 }.padding(.vertical, 2).padding(.trailing, 3)
-            }.scrollIndicators(.automatic)
+            }
         }
         .padding(24).frame(width: 520, height: 610, alignment: .topLeading)
         .foregroundStyle(.white).background(.clear).preferredColorScheme(.dark)
@@ -276,7 +276,7 @@ struct VenusOutagesSettings: View {
                 }.buttonStyle(VenusButtonStyle())
             } else {
                 Text(VL("Адреса для графіка", "Schedule address")).font(.system(size: 15, weight: .semibold))
-                Text(VL("Обери місто й оператора, потім введи вулицю та будинок.", "Choose a region and operator, then enter the street and building."))
+                Text(VL("Обери область і оператора, потім введи вулицю та будинок.", "Choose a region and operator, then enter the street and building."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
                 regionMenu
                 if store.regions.isEmpty && !store.isSearching {
@@ -379,7 +379,7 @@ struct VenusOutagesSettings: View {
     }
 
     private func addressSuggestions(_ items: [VenusOutageAddressItem], select: @escaping (VenusOutageAddressItem) -> Void) -> some View {
-        ScrollView {
+        VenusVerticalScroll {
             LazyVStack(spacing: 0) {
                 ForEach(items) { item in
                     Button { select(item) } label: {

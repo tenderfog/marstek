@@ -155,6 +155,7 @@ struct VenusPanel: View {
     private var overviewHeader: some View {
         HStack(spacing: 9) {
             Text(store.model == .unknown ? "VenusBar" : store.model.title).font(.system(size: 17, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
             Menu {
                 Button(VL("Керування станцією…", "Station controls…")) { openControls(from: .overview) }
                 Button(VL("Мережа…", "Network…"), action: openStationSettings)
@@ -176,13 +177,21 @@ struct VenusPanel: View {
                     .contentShape(Rectangle())
             }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 36).accessibilityLabel(VL("Меню станції", "Station menu"))
             Spacer()
+            if let release = updates.availableReleaseLabel {
+                Button(action: updates.checkForUpdates) {
+                    HStack(spacing: 7) {
+                        Image(systemName: "arrow.down.circle.fill").font(.system(size: 15))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(VL("Нова версія", "New version")).font(.system(size: 9)).opacity(0.65)
+                            Text(VL("Завантажити", "Download")).font(.system(size: 12, weight: .semibold))
+                        }
+                    }.fixedSize()
+                }.buttonStyle(VenusButtonStyle(primary: true, compact: true))
+                    .disabled(!updates.canCheckForUpdates)
+                    .help(VL("Оновлення VenusBar \(release)", "VenusBar update \(release)"))
+                    .accessibilityLabel(VL("Завантажити оновлення VenusBar \(release)", "Download VenusBar update \(release)"))
+            }
             Button(action: openSettings) { Image(systemName: "gearshape").font(.system(size: 16)) }
-                .overlay(alignment: .topTrailing) {
-                    if updates.availableVersion != nil {
-                        Circle().fill(Color.accentColor).frame(width: 7, height: 7).offset(x: 2, y: -2)
-                            .accessibilityHidden(true)
-                    }
-                }
                 .buttonStyle(VenusButtonStyle(compact: true)).help(VL("Налаштування VenusBar", "VenusBar settings")).accessibilityLabel(VL("Налаштування VenusBar", "VenusBar settings"))
         }.frame(height: 36)
             .help("\(store.report?.mode.map { VL("Режим станції: \($0).", "Station mode: \($0).") } ?? "") \(store.warning ?? "")")
@@ -301,15 +310,38 @@ struct VenusPanel: View {
         }.frame(maxHeight: .infinity).help(receiptHelp(key))
     }
     private var settings: some View {
-        settingsPage(VL("Налаштування", "Settings"), back: .overview) {
-            settingsRow(VL("Керування станцією", "Station controls"), subtitle: VL("Режими, заряджання та ліміти", "Modes, charging and limits"), symbol: "slider.horizontal.3") { openControls(from: .settings) }
-            settingsRow(VL("Мережа", "Network"), subtitle: VL("Пошук станції, IP та Local API", "Station discovery, IP and Local API"), symbol: "wifi", action: openStationSettings)
-            settingsRow(VL("Графіки відключень", "Outage schedules"), subtitle: VL("Область, оператор та твоя група", "Region, operator and your group"), symbol: "bolt.slash") { openOutages(from: .settings) }
-            settingsRow(VL("Сповіщення", "Notifications"), subtitle: VL("Події станції та високе навантаження", "Station events and high load"), symbol: "bell") { page = .notificationsSettings }
-            settingsRow(VL("Оновлення застосунку", "App updates"), subtitle: updateSubtitle, symbol: "arrow.down.circle") { page = .updateSettings }
-            settingsRow(VL("Інші параметри", "Other settings"), subtitle: VL("Мова, автозапуск і довідка", "Language, launch at login and help"), symbol: "slider.horizontal.3") { page = .otherSettings }
-            settingsRow(VL("Про застосунок", "About the app"), subtitle: VL("Версія, розробник і контакти", "Version, developer and contacts"), symbol: "info.circle") { page = .about }
-        }
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
+                Button { page = .overview } label: { Label(VL("Назад", "Back"), systemImage: "chevron.left") }
+                    .buttonStyle(VenusButtonStyle())
+                Text(VL("Налаштування", "Settings")).font(.system(size: 19, weight: .semibold))
+                Spacer(minLength: 0)
+            }.frame(height: 44)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                settingsTile(VL("Станція", "Station"), subtitle: VL("Режими й ліміти", "Modes and limits"), symbol: "slider.horizontal.3") { openControls(from: .settings) }
+                settingsTile(VL("Мережа", "Network"), subtitle: VL("Підключення, IP і порт", "Connection, IP and port"), symbol: "wifi", action: openStationSettings)
+                settingsTile(VL("Відключення", "Outages"), subtitle: VL("Адреса й графік", "Address and schedule"), symbol: "bolt.slash") { openOutages(from: .settings) }
+                settingsTile(VL("Сповіщення", "Notifications"), subtitle: VL("Навантаження й версії", "High load and updates"), symbol: "bell") { page = .notificationsSettings }
+                settingsTile(VL("Оновлення", "Updates"), subtitle: updateSubtitle, symbol: "arrow.down.circle", highlighted: updates.availableVersion != nil) { page = .updateSettings }
+                settingsTile(VL("Загальні", "General"), subtitle: VL("Мова й автозапуск", "Language and startup"), symbol: "gearshape") { page = .otherSettings }
+            }
+            Spacer(minLength: 0)
+            Button { page = .about } label: {
+                HStack(spacing: 12) {
+                    if let icon = NSApp.applicationIconImage {
+                        Image(nsImage: icon).resizable().frame(width: 34, height: 34).accessibilityHidden(true)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(VL("Про VenusBar", "About VenusBar")).font(.system(size: 14, weight: .medium))
+                        Text(versionLabel).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.4))
+                }.padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(VenusButtonStyle())
+            Text(VL("Зроблено в Україні", "Made in Ukraine")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+                .frame(maxWidth: .infinity)
+        }.padding(22)
     }
 
     private var stationSettings: some View {
@@ -371,7 +403,7 @@ struct VenusPanel: View {
     }
 
     private var clarificationSettings: some View {
-        DisclosureGroup(isExpanded: $clarificationExpanded) {
+        VenusDisclosure(VL("Уточнення показників", "Adjust readings"), isExpanded: $clarificationExpanded) {
             VStack(alignment: .leading, spacing: 12) {
                 Text(VL("«Розряджається» означає, що станція віддає енергію. Тут можна уточнити індикацію за фактичним станом; режим роботи станції не змінюється.", "“Discharging” means that the station is supplying energy. Adjust the indication to match its actual state; this does not change the station’s operating mode."))
                     .font(.system(size: 13)).foregroundStyle(.white.opacity(0.65)).fixedSize(horizontal: false, vertical: true)
@@ -383,9 +415,6 @@ struct VenusPanel: View {
                 Text(VL("Очікування означає відсутність помітного потоку енергії й не підтверджує живлення від мережі. Ручне підтвердження мережі діє 90 секунд.", "Standby means there is no significant energy flow; it does not confirm mains power. Manual mains confirmation lasts 90 seconds."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.5)).fixedSize(horizontal: false, vertical: true)
             }.padding(.top, 12)
-        } label: {
-            Text(VL("Уточнення показників", "Adjust readings")).font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white.opacity(0.75)).frame(minHeight: 32)
         }
     }
 
@@ -425,7 +454,7 @@ struct VenusPanel: View {
 
     private var versionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "2"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "5"
         return VL("Версія \(version) · збірка \(build)", "Version \(version) · build \(build)")
     }
 
@@ -436,7 +465,7 @@ struct VenusPanel: View {
                     get: { notifications.masterEnabled },
                     set: { notifications.setMasterEnabled($0) }))
                     .font(.system(size: 15, weight: .medium)).toggleStyle(.switch)
-                    .frame(minHeight: 44).disabled(notifications.isRequestingPermission)
+                    .frame(minHeight: 44)
                 Text(VL("Локальні сповіщення VenusBar на цьому Mac. Дозвіл macOS запитується після ввімкнення.", "Local VenusBar notifications on this Mac. macOS asks for permission when you turn them on."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
                     .fixedSize(horizontal: false, vertical: true)
@@ -448,6 +477,17 @@ struct VenusPanel: View {
                         Label(VL("Відкрити налаштування macOS", "Open macOS Settings"), systemImage: "arrow.up.right")
                     }.buttonStyle(VenusButtonStyle())
                 }
+            }
+            rule
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(VL("Нові версії VenusBar", "New VenusBar versions"), isOn: Binding(
+                    get: { notifications.updateEnabled },
+                    set: { notifications.setUpdateEnabled($0) }))
+                    .font(.system(size: 15, weight: .medium)).toggleStyle(.switch)
+                    .frame(minHeight: 44).disabled(!notifications.masterEnabled)
+                Text(VL("Одне сповіщення про кожну нову збірку. Натисни його, щоб переглянути зміни й завантажити оновлення.", "One notification for each new build. Click it to review the changes and download the update."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             rule
             VStack(alignment: .leading, spacing: 14) {
@@ -495,14 +535,14 @@ struct VenusPanel: View {
                     .accessibilityHidden(true)
                 Text("VenusBar").font(.system(size: 23, weight: .semibold))
                 Text(versionLabel).font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
-                if let version = updates.availableVersion {
-                    Label(VL("Доступна версія \(version)", "Version \(version) is available"), systemImage: "arrow.down.circle.fill")
+                if let release = updates.availableReleaseLabel {
+                    Label(VL("Доступне оновлення \(release)", "Update \(release) is available"), systemImage: "arrow.down.circle.fill")
                         .font(.system(size: 14, weight: .medium)).foregroundStyle(Color.accentColor)
                 }
                 Text(VL("Перевіряємо нові версії на GitHub. Коли з’явиться оновлення, побачиш, що змінилося, і зможеш встановити його.", "We check GitHub for new versions. When an update is available, you can see what changed and choose to install it."))
                     .font(.system(size: 13)).foregroundStyle(.white.opacity(0.65))
                     .fixedSize(horizontal: false, vertical: true)
-                Button(VL("Перевірити оновлення", "Check for Updates"), action: updates.checkForUpdates)
+                Button(updates.availableVersion == nil ? VL("Перевірити оновлення", "Check for Updates") : VL("Завантажити оновлення", "Download update"), action: updates.checkForUpdates)
                     .buttonStyle(VenusButtonStyle(primary: true)).disabled(!updates.canCheckForUpdates)
             }.padding(.vertical, 8)
             rule
@@ -524,12 +564,12 @@ struct VenusPanel: View {
     }
 
     private var updateSubtitle: String {
-        updates.availableVersion.map { VL("Доступна версія \($0)", "Version \($0) is available") }
+        updates.availableBuild.map { VL("Доступна збірка \($0)", "Build \($0) is available") }
             ?? VL("Нові версії VenusBar", "New versions of VenusBar")
     }
 
     private var otherSettings: some View {
-        settingsPage(VL("Інші параметри", "Other settings"), back: .settings) {
+        settingsPage(VL("Загальні параметри", "General settings"), back: .settings) {
             VStack(alignment: .leading, spacing: 9) {
                 Text(VL("Мова", "Language")).font(.system(size: 14))
                 Picker(VL("Мова застосунку", "App language"), selection: Binding(get: { localization.language }, set: { localization.choose($0) })) {
@@ -577,24 +617,27 @@ struct VenusPanel: View {
                 Text(title).font(.system(size: 17, weight: .semibold))
                 Spacer(minLength: 0)
             }
-            ScrollView {
+            VenusVerticalScroll {
                 VStack(alignment: .leading, spacing: 18, content: content)
                     .padding(.vertical, 2).padding(.trailing, 3)
-            }.scrollIndicators(.automatic)
+            }
         }.padding(22)
     }
 
-    private func settingsRow(_ title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> some View {
+    private func settingsTile(_ title: String, subtitle: String, symbol: String, highlighted: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: symbol).font(.system(size: 22, weight: .light)).frame(width: 32)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(.system(size: 15, weight: .medium))
-                    Text(subtitle).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: symbol).font(.system(size: 22, weight: .light))
+                        .foregroundStyle(highlighted ? Color.accentColor : .white.opacity(0.85))
+                    Spacer(minLength: 0)
+                    if highlighted { Circle().fill(Color.accentColor).frame(width: 6, height: 6).accessibilityHidden(true) }
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.45))
-            }.padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 2)
+                Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.85)
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(2).frame(height: 29, alignment: .topLeading)
+            }.padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading).frame(height: 132)
         }.buttonStyle(VenusButtonStyle())
     }
     private var needsFlowClarification: Bool {

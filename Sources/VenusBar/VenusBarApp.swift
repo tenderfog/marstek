@@ -21,6 +21,8 @@ struct VenusBarMain {
                 try VenusLocalization.selfCheck()
                 try VenusMenuTiming.selfCheck()
                 try VenusNotificationsStore.selfCheck()
+                try VenusScrollMetrics.selfCheck()
+                try VenusUpdates.selfCheck()
                 print("VenusBar self-check: passed")
                 return
             }

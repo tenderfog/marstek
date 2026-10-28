@@ -32,12 +32,12 @@ struct VenusControls: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 14) {
                 Button(action: onBack) { Label(VL("Назад", "Back"), systemImage: "chevron.left") }
-                    .buttonStyle(VenusButtonStyle()).accessibilityLabel(VL("Повернутися до огляду", "Back to overview"))
+                    .buttonStyle(VenusButtonStyle()).accessibilityLabel(VL("Назад", "Back"))
                 Text(VL("Керування станцією", "Station controls")).font(.system(size: 17, weight: .semibold))
                 Spacer()
                 Text(store.model.title).font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
             }.frame(height: 44)
-            ScrollView {
+            VenusVerticalScroll {
                 VStack(alignment: .leading, spacing: 15) {
                     modes
                     separator
@@ -50,7 +50,6 @@ struct VenusControls: View {
                     reset
                 }.padding(.vertical, 2).padding(.trailing, 3)
             }
-            .scrollIndicators(.automatic)
             .frame(maxHeight: .infinity)
             .disabled(store.commandBusy)
             status
@@ -144,7 +143,7 @@ struct VenusControls: View {
     }
 
     private var passive: some View {
-        DisclosureGroup(isExpanded: $passiveExpanded) {
+        VenusDisclosure(VL("Розширено · Passive", "Advanced · Passive"), isExpanded: $passiveExpanded) {
             VStack(alignment: .leading, spacing: 11) {
                 row(VL("Задана потужність, Вт", "Target power, W")) { integerField(VL("±Вт", "±W"), text: $passivePower) }
                 row(VL("Тривалість, с", "Duration, s")) { integerField("1…86400", text: $passiveSeconds) }
@@ -158,12 +157,12 @@ struct VenusControls: View {
                         } catch { inputError = error.localizedDescription }
                     }.buttonStyle(VenusButtonStyle(primary: true)).disabled(!canSend)
                 }
-            }.padding(.top, 10)
-        } label: { heading(VL("Розширено · Passive", "Advanced · Passive")) }
+            }
+        }
     }
 
     private var schedule: some View {
-        DisclosureGroup(isExpanded: $scheduleExpanded) {
+        VenusDisclosure(VL("Розширено · Новий розклад", "Advanced · New schedule"), isExpanded: $scheduleExpanded) {
             VStack(alignment: .leading, spacing: 11) {
                 note(VL("Новий запис розкладу. Застосування перемкне станцію в Manual і запише обраний слот; наявний вміст слота не зчитується.", "New schedule entry. Applying switches to Manual and writes the selected slot; its existing contents are not read."))
                 row(VL("Слот розкладу", "Schedule slot")) {
@@ -203,12 +202,12 @@ struct VenusControls: View {
                         } catch { inputError = error.localizedDescription }
                     }.buttonStyle(VenusButtonStyle(primary: true)).disabled(!canSend)
                 }
-            }.padding(.top, 10)
-        } label: { heading(VL("Розширено · Новий розклад", "Advanced · New schedule")) }
+            }
+        }
     }
 
     private var reset: some View {
-        DisclosureGroup(isExpanded: $resetExpanded) {
+        VenusDisclosure(VL("Заводське скидання", "Factory reset"), isExpanded: $resetExpanded, destructive: true) {
             VStack(alignment: .leading, spacing: 11) {
                 note(VL("Заводське скидання змінює налаштування станції. Доступне з прошивки 150; перед надсиланням буде окреме підтвердження.", "Factory reset changes station settings. Requires firmware 150 or later; a separate confirmation is required."))
                 Toggle(VL("Зберегти накопичені лічильники енергії", "Keep accumulated energy counters"), isOn: $keepEnergy)
@@ -221,8 +220,8 @@ struct VenusControls: View {
                         resetConfirmation = true
                     }.buttonStyle(VenusButtonStyle(compact: true)).disabled(!canSend || !store.supportsSystemControls)
                 }
-            }.padding(.top, 10)
-        } label: { heading(VL("Заводське скидання", "Factory reset")) }
+            }
+        }
         .disabled(store.commandBusy || !store.supportsSystemControls)
     }
 

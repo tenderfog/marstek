@@ -132,3 +132,107 @@ struct VenusTextFieldStyle: TextFieldStyle {
             .modifier(SwiftfulUICardSurface(backgroundColor: .white.opacity(0.065), borderColor: .white.opacity(0.1), cornerRadius: 12))
     }
 }
+
+struct VenusDisclosure<Content: View>: View {
+    let title: String
+    @Binding var isExpanded: Bool
+    private let destructive: Bool
+    private let content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(_ title: String, isExpanded: Binding<Bool>, destructive: Bool = false, @ViewBuilder content: () -> Content) {
+        self.title = title
+        _isExpanded = isExpanded
+        self.destructive = destructive
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 12) {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0)).accessibilityHidden(true)
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    .foregroundStyle(destructive ? VenusVisuals.supplying : .white.opacity(0.9))
+            }
+            .buttonStyle(VenusButtonStyle())
+            .accessibilityValue(isExpanded ? VL("Розгорнуто", "Expanded") : VL("Згорнуто", "Collapsed"))
+            if isExpanded { content.frame(maxWidth: .infinity, alignment: .leading) }
+        }
+    }
+}
+
+/// Keep the overflow hint outside the viewport so it never hides a form control.
+struct VenusVerticalScroll<Content: View>: View {
+    private let content: Content
+    @Namespace private var coordinateSpace
+    @State private var contentFrame = CGRect.zero
+    private let hintHeight: CGFloat = 24
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        GeometryReader { available in
+            let overflowing = VenusScrollMetrics.overflows(contentHeight: contentFrame.height, availableHeight: available.size.height)
+            let viewportHeight = available.size.height - (overflowing ? hintHeight : 0)
+            let moreBelow = overflowing && VenusScrollMetrics.hasMoreBelow(contentBottom: contentFrame.maxY, viewportHeight: viewportHeight)
+            VStack(spacing: 0) {
+                ScrollView(.vertical) {
+                    content.frame(maxWidth: .infinity, alignment: .leading)
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(key: VenusScrollContentFrame.self,
+                                                   value: [coordinateSpace: geometry.frame(in: .named(coordinateSpace))])
+                        })
+                }
+                .coordinateSpace(name: coordinateSpace)
+                .scrollIndicators(.visible)
+                .onPreferenceChange(VenusScrollContentFrame.self) { frames in
+                    if let frame = frames[coordinateSpace] { contentFrame = frame }
+                }
+                if overflowing {
+                    HStack(spacing: 5) {
+                        Text(VL("Прокрути вниз", "Scroll for more"))
+                        Image(systemName: "chevron.down").fontWeight(.semibold)
+                    }
+                    .font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                    .frame(maxWidth: .infinity).frame(height: hintHeight)
+                    .opacity(moreBelow ? 1 : 0).accessibilityHidden(!moreBelow)
+                }
+            }
+        }
+    }
+}
+
+private struct VenusScrollContentFrame: PreferenceKey {
+    static var defaultValue: [Namespace.ID: CGRect] = [:]
+    static func reduce(value: inout [Namespace.ID: CGRect], nextValue: () -> [Namespace.ID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+enum VenusScrollMetrics {
+    static func overflows(contentHeight: CGFloat, availableHeight: CGFloat) -> Bool {
+        availableHeight > 0 && contentHeight > availableHeight + 1
+    }
+
+    static func hasMoreBelow(contentBottom: CGFloat, viewportHeight: CGFloat) -> Bool {
+        viewportHeight > 0 && contentBottom > viewportHeight + 1
+    }
+
+    static func selfCheck() throws {
+        struct Invalid: Error {}
+        guard !overflows(contentHeight: 100, availableHeight: 100),
+              !overflows(contentHeight: 100, availableHeight: 0),
+              !overflows(contentHeight: 100.5, availableHeight: 100),
+              overflows(contentHeight: 102, availableHeight: 100),
+              hasMoreBelow(contentBottom: 110, viewportHeight: 100),
+              !hasMoreBelow(contentBottom: 100, viewportHeight: 100),
+              !hasMoreBelow(contentBottom: -20, viewportHeight: 100) else { throw Invalid() }
+    }
+}

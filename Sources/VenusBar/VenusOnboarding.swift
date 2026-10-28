@@ -28,14 +28,14 @@ struct VenusOnboarding: View {
                     header
                     steps
                     ScrollViewReader { scroll in
-                        ScrollView {
+                        VenusVerticalScroll {
                             Group {
                                 if step == 2 { connection }
                                 else { instructions }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                                 .id(step)
                                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .trailing)))
-                        }.scrollIndicators(.automatic).frame(maxHeight: 220)
+                        }.frame(maxHeight: 220)
                             .onChange(of: manualExpanded) { expanded in
                                 guard expanded else { return }
                                 DispatchQueue.main.async {
