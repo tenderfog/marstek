@@ -205,6 +205,7 @@ struct VenusOutageDay: Codable, Sendable {
     let slots: [VenusOutageSlot]?
     let date: String?
     let status: String?
+    var retainedSlotsFetchedAt: Date? = nil
     func isFor(_ day: Date) -> Bool {
         guard let value = date.flatMap(VenusOutagesReport.parseTimestamp) else { return false }
         return VenusOutagesReport.kyivCalendar.isDate(value, inSameDayAs: day)
@@ -261,6 +262,9 @@ struct VenusOutagesReport: Codable, Sendable {
             let days = [schedule.today, schedule.tomorrow].compactMap { $0 }
             for day in days {
                 if let date = day.date, parseTimestamp(date) == nil { throw VenusOutagesError.message(VL("Некоректна дата графіка YASNO.", "Invalid YASNO schedule date.")) }
+                if let retainedAt = day.retainedSlotsFetchedAt, retainedAt > fetchedAt {
+                    throw VenusOutagesError.message(VL("Некоректний час збереженого графіка YASNO.", "Invalid saved YASNO schedule time."))
+                }
                 let slots = day.slots ?? []
                 guard slots.count <= 1440 else { throw VenusOutagesError.message(VL("Забагато інтервалів YASNO.", "Too many YASNO intervals.")) }
                 var end = 0
@@ -284,12 +288,42 @@ struct VenusOutagesReport: Codable, Sendable {
         return [schedule.today, schedule.tomorrow].compactMap { $0 }.first { $0.isFor(now) }
     }
 
+    func retainingEmergencyIntervals(from previous: Self?) -> Self {
+        guard let previous, previous.fetchedAt <= fetchedAt else { return self }
+        var schedules = schedules
+        for (group, schedule) in schedules {
+            func retaining(_ day: VenusOutageDay?) -> VenusOutageDay? {
+                guard let day, day.status == "EmergencyShutdowns", day.slots?.isEmpty != false,
+                      let date = day.date.flatMap(Self.parseTimestamp),
+                      let saved = previous.day(group: group, at: date), saved.slots?.isEmpty == false,
+                      ["ScheduleApplies", "NoOutages", "EmergencyShutdowns"].contains(saved.status ?? "") else { return day }
+                // Emergency responses may omit the plan; retain only this group's exact Kyiv day.
+                return VenusOutageDay(slots: saved.slots, date: day.date, status: day.status,
+                                      retainedSlotsFetchedAt: saved.retainedSlotsFetchedAt ?? previous.fetchedAt)
+            }
+            schedules[group] = VenusOutageGroupSchedule(today: retaining(schedule.today), tomorrow: retaining(schedule.tomorrow),
+                                                       updatedOn: schedule.updatedOn)
+        }
+        return Self(schedules: schedules, fetchedAt: fetchedAt)
+    }
+
+    func planState(group: String, at now: Date, serviceHealthy: Bool = true) -> VenusOutagePlanState {
+        guard let day = day(group: group, at: now) else { return .unknown }
+        guard isFresh(at: now), serviceHealthy else { return .stale }
+        if day.status == "EmergencyShutdowns" { return .emergency }
+        let minute = Self.minute(at: now)
+        return intervals(group: group, at: now, serviceHealthy: serviceHealthy)
+            .first { $0.start <= minute && minute < $0.end }?.state ?? .unknown
+    }
+
     func intervals(group: String, at now: Date, serviceHealthy: Bool = true) -> [VenusOutageInterval] {
         guard let day = day(group: group, at: now) else { return [.init(start: 0, end: 1440, state: .unknown)] }
         guard isFresh(at: now), serviceHealthy else { return [.init(start: 0, end: 1440, state: .stale)] }
-        if day.status == "EmergencyShutdowns" { return [.init(start: 0, end: 1440, state: .emergency)] }
+        if day.status == "EmergencyShutdowns", day.slots?.isEmpty != false {
+            return [.init(start: 0, end: 1440, state: .emergency)]
+        }
         // Even an empty NoOutages response is not a measured or complete timeline.
-        guard ["ScheduleApplies", "NoOutages"].contains(day.status ?? ""), let slots = day.slots, !slots.isEmpty else {
+        guard ["ScheduleApplies", "NoOutages", "EmergencyShutdowns"].contains(day.status ?? ""), let slots = day.slots, !slots.isEmpty else {
             return [.init(start: 0, end: 1440, state: .unknown)]
         }
         var result: [VenusOutageInterval] = []
@@ -371,6 +405,9 @@ enum VenusOutageStatusProjection {
     static func label(report: VenusOutagesReport?, group: String?, at now: Date,
                       serviceHealthy: Bool = true) -> String {
         guard let report, let group else { return VenusOutagePlanState.unknown.label }
+        if report.planState(group: group, at: now, serviceHealthy: serviceHealthy) == .emergency {
+            return VenusOutagePlanState.emergency.label
+        }
         let slots = report.intervals(group: group, at: now, serviceHealthy: serviceHealthy)
         let minute = VenusOutagesReport.minute(at: now)
         guard let current = slots.first(where: { $0.start <= minute && minute < $0.end }) else {
@@ -538,8 +575,12 @@ final class VenusOutagesStore: ObservableObject {
         return report.intervals(group: selection.group, at: Date(), serviceHealthy: !refreshFailed)
     }
     var currentPlanState: VenusOutagePlanState {
-        let minute = VenusOutagesReport.minute(at: Date())
-        return todaySlots.first { $0.start <= minute && minute < $0.end }?.state ?? .unknown
+        guard let selection, let report else { return .unknown }
+        return report.planState(group: selection.group, at: Date(), serviceHealthy: !refreshFailed)
+    }
+    var retainedPlanFetchedAt: Date? {
+        guard let selection else { return nil }
+        return report?.day(group: selection.group, at: Date())?.retainedSlotsFetchedAt
     }
     var statusLabel: String {
         selection == nil ? VL("Обери адресу для графіка", "Select an address for the schedule") : VenusOutageStatusProjection.label(report: report, group: selection?.group, at: Date(), serviceHealthy: !refreshFailed)
@@ -693,7 +734,8 @@ final class VenusOutagesStore: ObservableObject {
                 try Task.checkCancellation()
                 guard let self, self.refreshGeneration == generation, self.selection?.cacheKey == key else { return }
                 guard result.schedules[selection.group] != nil else { throw VenusOutagesError.message(VL("У графіку YASNO поки немає обраної групи.", "The selected group is not in the YASNO schedule yet.")) }
-                self.report = result; self.error = nil; self.usingSavedReport = false; self.refreshFailed = false
+                self.report = result.retainingEmergencyIntervals(from: self.report)
+                self.error = nil; self.usingSavedReport = false; self.refreshFailed = false
                 self.isLoading = false; self.refreshTask = nil; self.save()
             } catch {
                 guard !Task.isCancelled, let self, self.refreshGeneration == generation, self.selection?.cacheKey == key else { return }
@@ -814,8 +856,31 @@ extension VenusOutagesReport {
         try check(gap.currentOrNextOutage(group: "17.2", at: now) == nil, "incomplete plan forecast")
         let emergency = try decode(Data(fixture.replacingOccurrences(of: "ScheduleApplies", with: "EmergencyShutdowns").utf8), fetchedAt: now)
         try check(VenusOutageNextChange.make(report: emergency, group: "17.2", at: now) == nil, "emergency has no next change")
-        try check(emergency.intervals(group: "17.2", at: now).first?.state == .emergency, "emergency overrides slots")
+        try check(emergency.planState(group: "17.2", at: now) == .emergency, "emergency status is independent of planned slots")
+        try check(emergency.intervals(group: "17.2", at: now) == slots, "emergency preserves returned planned intervals and colours")
+        try check(VenusOutageStatusProjection.label(report: emergency, group: "17.2", at: now) == VenusOutagePlanState.emergency.label, "emergency cannot promise power until a planned time")
         try check(emergency.currentOrNextOutage(group: "17.2", at: now) == nil, "no emergency forecast")
+        let emptyEmergencyJSON = #"{"17.2":{"today":{"slots":[],"date":"2026-10-27T00:00:00+02:00","status":"EmergencyShutdowns"},"tomorrow":{"slots":[],"date":"2026-10-28T00:00:00+02:00","status":"EmergencyShutdowns"},"updatedOn":"2026-10-27T08:05:00Z"}}"#
+        let emergencyReceipt = now.addingTimeInterval(300)
+        let emptyEmergency = try decode(Data(emptyEmergencyJSON.utf8), fetchedAt: emergencyReceipt)
+        try check(emptyEmergency.planState(group: "17.2", at: emergencyReceipt) == .emergency, "real YASNO emergency shape without slots")
+        try check(emptyEmergency.intervals(group: "17.2", at: emergencyReceipt).first?.state == .emergency, "emergency without a saved plan has no invented slots")
+        let retained = emptyEmergency.retainingEmergencyIntervals(from: report)
+        try check(retained.intervals(group: "17.2", at: emergencyReceipt) == slots && retained.planState(group: "17.2", at: emergencyReceipt) == .emergency, "retained plan cannot replace emergency status")
+        try check(retained.day(group: "17.2", at: emergencyReceipt)?.retainedSlotsFetchedAt == now && retained.fetchedAt == emergencyReceipt, "retained plan keeps its original receipt separate from emergency update")
+        try check(retained.currentOrNextOutage(group: "17.2", at: emergencyReceipt) == nil && VenusOutageNextChange.make(report: retained, group: "17.2", at: emergencyReceipt) == nil, "retained emergency plan cannot produce restoration forecasts or countdowns")
+        let repeated = emptyEmergency.retainingEmergencyIntervals(from: retained)
+        try check(repeated.day(group: "17.2", at: emergencyReceipt)?.retainedSlotsFetchedAt == now, "repeated emergency refresh never freshens saved plan")
+        try check(emergency.retainingEmergencyIntervals(from: retained).day(group: "17.2", at: now)?.retainedSlotsFetchedAt == nil, "newly returned slots take priority over saved plan")
+        try check(emptyEmergency.retainingEmergencyIntervals(from: nil).day(group: "17.2", at: emergencyReceipt)?.slots?.isEmpty == true, "no cache means no invented plan")
+        let otherGroup = Self(schedules: ["18.1": report.schedules["17.2"]!], fetchedAt: now)
+        try check(emptyEmergency.retainingEmergencyIntervals(from: otherGroup).day(group: "17.2", at: emergencyReceipt)?.slots?.isEmpty == true, "never retain another group's plan")
+        let unsupported = try decode(Data(fixture.replacingOccurrences(of: "ScheduleApplies", with: "FutureStatus").utf8), fetchedAt: now)
+        try check(emptyEmergency.retainingEmergencyIntervals(from: unsupported).day(group: "17.2", at: emergencyReceipt)?.slots?.isEmpty == true, "unknown provider status cannot become a saved plan")
+        let nextDay = parseTimestamp("2026-10-28T08:00:00Z")!
+        try check(retained.day(group: "17.2", at: nextDay)?.slots?.isEmpty == true, "today's retained plan never leaks into tomorrow")
+        try check(retained.planState(group: "17.2", at: emergencyReceipt.addingTimeInterval(1801)) == .stale && retained.planState(group: "17.2", at: emergencyReceipt, serviceHealthy: false) == .stale, "saved emergency report never becomes a fresh status after failure")
+        try check(report.retainingEmergencyIntervals(from: retained).day(group: "17.2", at: now)?.status == "ScheduleApplies", "regular schedule response clears emergency mode")
         let tomorrow = parseTimestamp("2026-10-27T22:10:00Z")!
         let freshTomorrow = Self(schedules: report.schedules, fetchedAt: tomorrow)
         try check(freshTomorrow.day(group: "17.2", at: tomorrow)?.status == "WaitingForSchedule", "Kyiv date rollover uses tomorrow")
@@ -843,5 +908,8 @@ extension VenusOutagesReport {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let restored = try decoder.decode(Self.self, from: encoder.encode(report))
         try check(restored.fetchedAt == now && !restored.isFresh(at: now.addingTimeInterval(1801)), "cache never freshens receipt")
+        let restoredEmergency = try decoder.decode(Self.self, from: encoder.encode(retained))
+        let validatedEmergency = try decode(JSONEncoder().encode(restoredEmergency.schedules), fetchedAt: restoredEmergency.fetchedAt)
+        try check(validatedEmergency.day(group: "17.2", at: emergencyReceipt)?.retainedSlotsFetchedAt == now && validatedEmergency.intervals(group: "17.2", at: emergencyReceipt) == slots, "saved emergency and original plan timestamp survive cache validation")
     }
 }

@@ -391,11 +391,12 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
             suffix.addAttribute(.baselineOffset, value: -2, range: NSRange(location: 0, length: suffix.length))
             label.append(suffix)
         }
-        if outages.selection != nil, planState == .noOutagePlanned || planState == .outagePlanned {
+        if outages.selection != nil, [.noOutagePlanned, .outagePlanned, .emergency].contains(planState) {
             label.append(NSAttributedString(string: "  ", attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
             let gridOn = planState == .noOutagePlanned
-            let gridSymbol = gridOn ? "bolt.fill" : "bolt.slash.fill"
-            let gridColor = gridOn ? NSColor.systemGreen : NSColor.systemRed
+            let emergency = planState == .emergency
+            let gridSymbol = emergency ? "exclamationmark.triangle.fill" : gridOn ? "bolt.fill" : "bolt.slash.fill"
+            let gridColor = emergency ? NSColor.systemOrange : gridOn ? NSColor.systemGreen : NSColor.systemRed
             if let image = coloredSymbol(gridSymbol, color: gridColor) {
                 let attachment = NSTextAttachment()
                 attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
@@ -403,21 +404,23 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
                 icon.addAttribute(.baselineOffset, value: -2, range: NSRange(location: 0, length: icon.length))
                 label.append(icon)
             }
-            if let nextChange, urgent {
+            if let nextChange, !emergency, urgent {
                 label.append(NSAttributedString(string: " "))
                 let attachment = NSTextAttachment()
                 attachment.attachmentCell = NSTextAttachmentCell(imageCell: outageTimeBadge(nextChange.timeText))
                 let badge = NSMutableAttributedString(attachment: attachment)
                 badge.addAttribute(.baselineOffset, value: -3, range: NSRange(location: 0, length: badge.length))
                 label.append(badge)
-            } else if let nextChange {
+            } else if let nextChange, !emergency {
                 label.append(NSAttributedString(string: " " + nextChange.timeText, attributes: [
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
                     .foregroundColor: NSColor.labelColor]))
             }
         }
         button.attributedTitle = label
-        let scheduleLabel = nextChange.map { VL(", за графіком \($0.titleShort.lowercased()) о \($0.timeText)", ", \($0.titleShort.lowercased()) at \($0.timeText) according to the schedule") } ?? ""
+        let scheduleLabel = planState == .emergency
+            ? VL(", аварійні відключення; графік може не діяти", ", emergency outages; the schedule may not apply")
+            : nextChange.map { VL(", за графіком \($0.titleShort.lowercased()) о \($0.timeText)", ", \($0.titleShort.lowercased()) at \($0.timeText) according to the schedule") } ?? ""
         button.setAccessibilityLabel("VenusBar, \(percentage), \(store.flowText)\(scheduleLabel)")
         resizeIslandIfVisible()
     }

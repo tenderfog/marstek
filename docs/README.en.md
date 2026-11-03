@@ -86,7 +86,7 @@ If discovery fails, check the port and **System Settings → Privacy & Security 
 | **At a glance** | See battery percentage in the menu bar and a compact hover panel with active power readings, temperature and an optional daily outage timeline. |
 | **Charge & discharge** | Separate power readings, remaining energy in kWh, battery temperature and load relative to a known output rating. Green means charging; red means discharging. |
 | **Power history** | Explore 1 hour, 3 hours, 5 hours or a full day. Longer periods scroll horizontally. Between responses, the chart holds the last reading and shows its original time. |
-| **Outage schedules** | Find your street and building through YASNO, then see today's intervals and the current time. Skip this entirely if you do not need it. |
+| **Outage schedules** | Find your street and building through YASNO, then see today's intervals and the current time. Emergency status is shown separately; the returned or saved plan for the same day stays visible with a warning. Skip this entirely if you do not need it. |
 | **Battery estimates** | Estimate time to full charge or whether the battery should last until scheduled power restoration, when sufficient battery data is available. |
 | **Notifications** | Choose a consumption threshold and alerts about new VenusBar builds. Configure each separately; the master switch and macOS permission are required. Notifications are off by default. |
 | **Station controls** | Access the model's supported API commands for modes, charging schedules and settings. Physical execution still needs hardware validation. |

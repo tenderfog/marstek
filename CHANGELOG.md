@@ -2,6 +2,14 @@
 
 Notable changes to VenusBar, starting with version **0.1**. Build numbers increase within a version. Entries below describe development builds; a downloadable release exists only when it appears in [GitHub Releases](https://github.com/tenderfog/marstek/releases).
 
+## 0.1 · Build 6 — 2026-11-03
+
+### Fixed
+
+- Emergency outages are shown separately from the hourly plan, including an orange warning in the menu bar, hover panel and schedule card.
+- Planned intervals remain visible during emergency outages. If YASNO temporarily removes them, the last plan for the same group and Kyiv calendar day is retained, clearly labelled with its original receipt time in schedule settings.
+- Emergency mode never promises a scheduled restoration time or uses it for the battery-to-restoration estimate. Ordinary battery runtime estimates remain available.
+
 ## 0.1 · Build 5 — 2026-10-28
 
 ### Added

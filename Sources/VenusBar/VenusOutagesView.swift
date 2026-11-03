@@ -29,6 +29,10 @@ struct VenusMiniOutageTimeline: View {
     private func configured(at now: Date) -> some View {
         VStack(spacing: 5) {
             HStack(spacing: 6) {
+                if store.currentPlanState == .emergency {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10)).foregroundStyle(VenusOutageStyle.color(.emergency))
+                }
                 Text(planSummary(at: now))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(VenusOutageStyle.color(store.currentPlanState))
@@ -81,7 +85,7 @@ struct VenusMiniOutageTimeline: View {
         switch store.currentPlanState {
         case .noOutagePlanned: return end.map { VL("Світло до \($0)", "Power until \($0)") } ?? VL("Світло за графіком", "Power scheduled")
         case .outagePlanned: return end.map { VL("Без світла до \($0)", "Outage until \($0)") } ?? VL("Планове відключення", "Scheduled outage")
-        case .emergency: return VL("аварійні відключення", "emergency outages")
+        case .emergency: return VL("Аварійні відключення", "Emergency outages")
         case .stale: return VL("потрібне оновлення", "update needed")
         case .unknown: return store.isLoading ? VL("оновлюємо дані", "updating") : VL("ще немає даних", "no data yet")
         }
@@ -97,7 +101,9 @@ struct VenusMiniOutageTimeline: View {
 
     private func accessibilityText(at now: Date) -> String {
         guard store.selection != nil else { return VL("Графік відключень не налаштований. Додай адресу в головній панелі.", "No outage schedule configured. Add an address in the main panel.") }
-        return VL("Графік на сьогодні, київський час. Зараз \(clock(now)). \(store.statusLabel). \(store.isCached ? "Збережений графік. " : "")Біла позначка показує поточний час. Це план оператора, не фактична наявність електрики.", "Today’s schedule, Kyiv time. Now \(clock(now)). \(store.statusLabel). \(store.isCached ? "Saved schedule. " : "")The white marker shows the current time. This is the operator’s plan, not actual power availability.")
+        let warning = store.currentPlanState == .emergency ? VL("Графік може не діяти. ", "The schedule may not apply. ") : ""
+        let saved = store.isCached || store.retainedPlanFetchedAt != nil
+        return VL("Графік на сьогодні, київський час. Зараз \(clock(now)). \(store.statusLabel). \(warning)\(saved ? "Збережений графік. " : "")Біла позначка показує поточний час. Це план оператора, не фактична наявність електрики.", "Today’s schedule, Kyiv time. Now \(clock(now)). \(store.statusLabel). \(warning)\(saved ? "Saved schedule. " : "")The white marker shows the current time. This is the operator’s plan, not actual power availability.")
     }
 }
 
@@ -136,11 +142,19 @@ struct VenusTodayOutageCard: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if store.currentPlanState == .emergency {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12)).foregroundStyle(cardAccent)
+                    }
                     Text(headline(at: now)).font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.95)).lineLimit(1).minimumScaleFactor(0.85)
+                        .foregroundStyle(store.currentPlanState == .emergency ? cardAccent : .white.opacity(0.95))
+                        .lineLimit(1).minimumScaleFactor(0.85)
                     Spacer(minLength: 2)
                     HStack(spacing: 5) {
-                        Text(VL("За графіком", "Scheduled"))
+                        Text(store.currentPlanState == .emergency
+                             ? (store.retainedPlanFetchedAt != nil ? VL("Збережений графік · може не діяти", "Saved schedule · may not apply") : VL("Графік може не діяти", "Schedule may not apply"))
+                             : VL("За графіком", "Scheduled"))
+                            .minimumScaleFactor(0.85)
                         Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
                     }.font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 }
@@ -152,12 +166,13 @@ struct VenusTodayOutageCard: View {
     }
 
     @ViewBuilder private func intervals(at now: Date) -> some View {
-        if store.currentPlanState == .emergency {
-            Text(VL("Екстрені відключення: погодинний план може не діяти.", "Emergency outages: the hourly plan may not apply."))
+        let upcoming = store.nextIntervals(limit: 3)
+        if store.currentPlanState == .emergency && !upcoming.contains(where: { [.noOutagePlanned, .outagePlanned].contains($0.state) }) {
+            Text(VL("Час відновлення невідомий. Немає точних інтервалів для решти дня.", "Restoration time is unknown. No exact intervals for the rest of today."))
                 .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(2)
-        } else if !store.nextIntervals(limit: 3).isEmpty {
+        } else if !upcoming.isEmpty {
             HStack(spacing: 10) {
-                ForEach(store.nextIntervals(limit: 3)) { interval in
+                ForEach(upcoming) { interval in
                     let state = displayState(interval.state)
                     let minute = VenusOutagesReport.minute(at: now)
                     let current = interval.start <= minute && minute < interval.end
@@ -178,7 +193,7 @@ struct VenusTodayOutageCard: View {
                         .modifier(SwiftfulUICardSurface(backgroundColor: .white.opacity(current ? 0.065 : 0.025),
                                                        borderColor: .clear, borderWidth: 0, cornerRadius: 11))
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(current ? VL("Зараз. ", "Now. ") : "")\(interval.timeRange). \(state.label)")
+                        .accessibilityLabel("\(current ? VL("Зараз. ", "Now. ") : "")\(interval.timeRange). \(state.label). \(store.currentPlanState == .emergency ? VL("Графік може не діяти.", "The schedule may not apply.") : "")")
                 }
             }
         } else {
@@ -209,8 +224,8 @@ struct VenusTodayOutageCard: View {
 
     private func displayState(_ state: VenusOutagePlanState) -> VenusOutagePlanState {
         switch store.currentPlanState {
-        case .stale, .emergency, .unknown: return store.currentPlanState
-        case .noOutagePlanned, .outagePlanned: return state
+        case .stale, .unknown: return store.currentPlanState
+        case .noOutagePlanned, .outagePlanned, .emergency: return state
         }
     }
 }
@@ -425,11 +440,16 @@ struct VenusOutagesSettings: View {
                 Text("\(store.isCached ? VL("Останній графік", "Last schedule") : VL("Отримано", "Received")) · \(fetched.formatted(.dateTime.day().month(.abbreviated).hour().minute().locale(localization.language.locale)))")
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
             }
+            if let fetched = store.retainedPlanFetchedAt {
+                Text(VL("Збережений графік · отримано \(fetched.formatted(.dateTime.day().month(.abbreviated).hour().minute().locale(localization.language.locale)))", "Saved schedule · received \(fetched.formatted(.dateTime.day().month(.abbreviated).hour().minute().locale(localization.language.locale)))"))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
+            }
             if store.currentPlanState == .emergency {
-                Text(VL("Під час екстрених відключень наведений погодинний графік може не діяти.", "During emergency outages, the hourly schedule may not apply."))
+                Text(VL("Під час аварійних відключень графік може не діяти. Час відновлення невідомий.", "During emergency outages, the schedule may not apply. Restoration time is unknown."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
             }
-            if store.report != nil && !store.todaySlots.isEmpty {
+            if store.report != nil && !store.todaySlots.isEmpty
+                && (store.currentPlanState != .emergency || store.todaySlots.contains(where: { [.noOutagePlanned, .outagePlanned].contains($0.state) })) {
                 Text(VL("Сьогодні · за київським часом", "Today · Kyiv time")).font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.55))
                 ForEach(store.todaySlots) { interval in
                     HStack(spacing: 10) {
@@ -440,14 +460,17 @@ struct VenusOutagesSettings: View {
                     }.font(.system(size: 12)).foregroundStyle(VenusOutageStyle.color(intervalState(interval.state)))
                         .padding(.vertical, 4)
                 }
+            } else if store.currentPlanState == .emergency {
+                Text(VL("Погодинний графік ще не надійшов.", "No hourly schedule has been received yet."))
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
             }
         }
     }
 
     private func intervalState(_ state: VenusOutagePlanState) -> VenusOutagePlanState {
         switch store.currentPlanState {
-        case .stale, .emergency, .unknown: return store.currentPlanState
-        case .noOutagePlanned, .outagePlanned: return state
+        case .stale, .unknown: return store.currentPlanState
+        case .noOutagePlanned, .outagePlanned, .emergency: return state
         }
     }
 
