@@ -1,8 +1,8 @@
 {
   "version": "0.1",
-  "build": 6,
-  "sourceCommit": "2cf408003d23508f40baa101eadfddbfc74c7b95",
-  "runID": 41655044493,
+  "build": 7,
+  "sourceCommit": "6338695c9c1f68dd97f9ce6b387c859159c1d352",
+  "runID": 41666932407,
   "artifactName": "VenusBar-universal",
-  "zipSHA256": "018b789d9f8c1818ad3798a714b38b5e8d548c3ece2ff6d9a8b8fd4b94832557"
+  "zipSHA256": "4c34e4a0f8d225fd5e59495d83d1b577a770de5d2c9d6224dd2f1b95691a753f"
 }

@@ -5,24 +5,24 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <title>VenusBar</title>
         <item>
             <title>0.1</title>
-            <pubDate>Tue, 03 Nov 2026 16:38:43 +0200</pubDate>
+            <pubDate>Tue, 03 Nov 2026 17:48:18 +0200</pubDate>
             <link>https://github.com/tenderfog/marstek</link>
             <sparkle:fullReleaseNotesLink>https://github.com/tenderfog/marstek/blob/main/CHANGELOG.md</sparkle:fullReleaseNotesLink>
-            <sparkle:version>6</sparkle:version>
+            <sparkle:version>7</sparkle:version>
             <sparkle:shortVersionString>0.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<p>Аварійні відключення тепер позначаються помаранчевим попередженням у головній панелі, при наведенні та в рядку меню.<br>
-Погодинний графік залишається видимим. Якщо YASNO тимчасово прибирає інтервали, зберігаємо останній план тієї самої групи й дня з початковим часом отримання.<br>
-Під час аварій графік може не діяти: час ввімкнення та прогноз «вистачить до ввімкнення» не показуються.<br>
+            <description><![CDATA[<p>Пошук нових версій запускається автоматично при старті VenusBar і далі щогодини. Відкриття панелі тихо оновлює інформацію, коли настав час перевірки.<br>
+Коли доступне оновлення, поруч із налаштуваннями з’являється кнопка «Завантажити». Для неї не потрібен дозвіл на системні сповіщення. Автоматичні перевірки можна вимкнути в налаштуваннях.<br>
+Під час аварійних відключень порожній графік тепер пояснюється точніше: YASNO тимчасово не надає інтервали. Інші сервіси можуть мати окремі дані.<br>
 <br>
-Emergency outages now have an orange warning in the main panel, hover panel and menu bar.<br>
-Hourly intervals stay visible. If YASNO temporarily removes them, the last plan for the same group and day is retained with its original receipt time.<br>
-During emergency outages, the plan may not apply: scheduled restoration times and battery-to-restoration predictions are withheld.</p>
+VenusBar checks for updates on launch and hourly. Opening the panel quietly refreshes availability when due.<br>
+A Download button appears beside Settings when an update is available, without requiring macOS notification permission. Automatic checks remain optional.<br>
+The empty emergency schedule message now explains that YASNO is not providing intervals; other services may have different data.</p>
 ]]></description>
-            <enclosure url="https://github.com/tenderfog/marstek/releases/download/v0.1-build6/VenusBar.zip" length="3898867" type="application/octet-stream" sparkle:edSignature="G0nFgXpwLF3sqG4KeKPc+ZGLRJ5L+k8j7xL2/roeBE8OOj8KJbtCsTxGI00YoxR2w4x3U8sYODjWyiG1MOzJCQ=="></enclosure>
+            <enclosure url="https://github.com/tenderfog/marstek/releases/download/v0.1-build7/VenusBar.zip" length="3901161" type="application/octet-stream" sparkle:edSignature="ftBjxIzxe8MWQMY1He+GHYXHNQbe+eqFO9q7YEEyT/5HS04p9kj2geVd3JA8Nxrky1SYOjWTL4uN2MNugLqrDA=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 9TvoS4KbpWVDRvkGLd5EZGq4BqXGScjJLA3dHvfUkmjZ/o8ozMXftgI6CfSQJluvPAtytO4RaynHoZloECoZDw==
-length: 2383
+edSignature: /v81BJ/RmTka8ujjC7Shb+AwW2tF0NuIYshrBr0tcLNMbMxrXTCO8hoJhuxVrHgHjU/aYfB1NzlswMIOOR1TDw==
+length: 2590
 -->
