@@ -117,7 +117,7 @@ If discovery fails, check the port and **System Settings → Privacy & Security 
 
 ## Updates
 
-Starting with **build 4**, VenusBar uses [Sparkle](https://sparkle-project.org/) for in-app updates. Open **Settings → Updates → Check for Updates**, or enable automatic checks. When a new build is found, a dedicated Download button appears in the main panel. You can also enable new-version alerts under Notifications. Review the changes, then choose whether to download, install and restart. Your station connection, address, history and preferences are kept.
+Starting with **build 4**, VenusBar uses [Sparkle](https://sparkle-project.org/) for in-app updates. Open **Settings → Updates → Check for Updates**, or enable automatic checks. From **build 7**, automatic checks run on launch and hourly; opening the main panel also refreshes availability when due. When a new build is found, a Download button appears beside Settings without requiring macOS notification permission. You can also enable system alerts under Notifications. Review the changes, then choose whether to download, install and restart. Your station connection, address, history and preferences are kept.
 
 Older builds need **one manual installation** of a build with the updater. Public updates are distributed through GitHub Releases; downloading them does not require a GitHub account. The updater's signatures do not replace Apple notarization or remove the first-launch restriction.
 

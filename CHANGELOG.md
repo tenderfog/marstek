@@ -2,6 +2,15 @@
 
 Notable changes to VenusBar, starting with version **0.1**. Build numbers increase within a version. Entries below describe development builds; a downloadable release exists only when it appears in [GitHub Releases](https://github.com/tenderfog/marstek/releases).
 
+## 0.1 · Build 7 — 2026-11-03
+
+### Fixed
+
+- Check for updates immediately on launch when automatic checks are enabled, then hourly instead of daily.
+- Opening the main panel quietly refreshes update availability when due. The existing Download button beside Settings appears without requiring macOS notification permission or opening an update dialog.
+- Quiet checks respect the automatic-check preference, avoid active update sessions and limit retries. Network failures preserve an already known update.
+- When emergency mode has no current or saved intervals, explain that YASNO is not providing them rather than implying no schedule exists elsewhere.
+
 ## 0.1 · Build 6 — 2026-11-03
 
 ### Fixed

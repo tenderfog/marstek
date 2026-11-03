@@ -168,7 +168,7 @@ struct VenusTodayOutageCard: View {
     @ViewBuilder private func intervals(at now: Date) -> some View {
         let upcoming = store.nextIntervals(limit: 3)
         if store.currentPlanState == .emergency && !upcoming.contains(where: { [.noOutagePlanned, .outagePlanned].contains($0.state) }) {
-            Text(VL("Час відновлення невідомий. Немає точних інтервалів для решти дня.", "Restoration time is unknown. No exact intervals for the rest of today."))
+            Text(VL("YASNO тимчасово не надає графік.", "YASNO is not providing a schedule at the moment."))
                 .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7)).lineLimit(2)
         } else if !upcoming.isEmpty {
             HStack(spacing: 10) {
@@ -461,7 +461,7 @@ struct VenusOutagesSettings: View {
                         .padding(.vertical, 4)
                 }
             } else if store.currentPlanState == .emergency {
-                Text(VL("Погодинний графік ще не надійшов.", "No hourly schedule has been received yet."))
+                Text(VL("YASNO тимчасово не надає погодинний графік.", "YASNO is not providing hourly intervals at the moment."))
                     .font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
             }
         }

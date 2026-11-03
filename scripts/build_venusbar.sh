@@ -157,7 +157,7 @@ cat > "$stage_app/Contents/Info.plist" <<'PLIST'
     <key>SURequireSignedFeed</key><true/>
     <key>SUSignedFeedFailureExpirationInterval</key><integer>0</integer>
     <key>SUEnableAutomaticChecks</key><true/>
-    <key>SUScheduledCheckInterval</key><integer>86400</integer>
+    <key>SUScheduledCheckInterval</key><integer>3600</integer>
     <key>SUAllowsAutomaticUpdates</key><false/>
     <key>SUAutomaticallyUpdate</key><false/>
     <key>SUEnableSystemProfiling</key><false/>

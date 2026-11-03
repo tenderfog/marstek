@@ -30,6 +30,7 @@ final class VenusUpdates: NSObject, ObservableObject, SPUStandardUserDriverDeleg
     @Published private(set) var availableBuild: String?
     private lazy var controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
     private let currentBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+    private var lastAvailabilityAttempt: Date?
     private static let availableReleaseKey = "updates.availableRelease"
     var isAvailable: Bool { Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String != nil }
     var isPresentingUpdate: Bool { isAvailable && controller.updater.sessionInProgress }
@@ -53,6 +54,28 @@ final class VenusUpdates: NSObject, ObservableObject, SPUStandardUserDriverDeleg
         controller.updater.publisher(for: \.automaticallyChecksForUpdates)
             .receive(on: RunLoop.main).assign(to: &$automaticallyChecksForUpdates)
         controller.startUpdater()
+        if controller.updater.automaticallyChecksForUpdates && controller.updater.canCheckForUpdates {
+            controller.updater.checkForUpdatesInBackground()
+        }
+    }
+
+    func refreshAvailability(now: Date = Date()) {
+        guard isAvailable, controller.updater.canCheckForUpdates,
+              Self.shouldRefreshAvailability(enabled: controller.updater.automaticallyChecksForUpdates,
+                                             busy: controller.updater.sessionInProgress,
+                                             lastCheck: controller.updater.lastUpdateCheckDate,
+                                             lastAttempt: lastAvailabilityAttempt, now: now) else { return }
+        lastAvailabilityAttempt = now
+        // Probing updates the header without opening a window or stealing focus.
+        controller.updater.checkForUpdateInformation()
+    }
+
+    private static func shouldRefreshAvailability(enabled: Bool, busy: Bool, lastCheck: Date?,
+                                                  lastAttempt: Date?, now: Date) -> Bool {
+        guard enabled, !busy else { return false }
+        if let lastAttempt, (0..<900).contains(now.timeIntervalSince(lastAttempt)) { return false }
+        if let lastCheck, (0..<3600).contains(now.timeIntervalSince(lastCheck)) { return false }
+        return true
     }
 
     func checkForUpdates() {
@@ -127,5 +150,15 @@ final class VenusUpdates: NSObject, ObservableObject, SPUStandardUserDriverDeleg
             try check(!VenusUpdateRelease(version: "0.1", build: invalid).isNewer(than: "4"), "invalid build ignored")
         }
         try check(!VenusUpdateRelease(version: "", build: "5").isNewer(than: "4"), "missing display version ignored")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func refresh(enabled: Bool = true, busy: Bool = false, checked: Date? = nil, attempted: Date? = nil) -> Bool {
+            shouldRefreshAvailability(enabled: enabled, busy: busy, lastCheck: checked, lastAttempt: attempted, now: now)
+        }
+        try check(refresh(), "opening the panel can discover updates without a previous check")
+        try check(!refresh(enabled: false) && !refresh(busy: true), "automatic preference and active update sessions are respected")
+        try check(!refresh(checked: now.addingTimeInterval(-3599)) && refresh(checked: now.addingTimeInterval(-3600)), "recent update checks are limited to hourly")
+        try check(!refresh(attempted: now.addingTimeInterval(-899)) && refresh(attempted: now.addingTimeInterval(-900)), "reopening the panel cannot repeatedly retry a failed check")
+        try check(refresh(checked: now.addingTimeInterval(3600)), "clock rollback does not block checks indefinitely")
+        try check(!refresh(checked: now.addingTimeInterval(3600), attempted: now), "clock rollback still respects retry limit")
     }
 }

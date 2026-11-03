@@ -465,6 +465,7 @@ private final class VenusAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showFullPanel() {
+        VenusUpdates.shared.refreshAvailability()
         hideIsland(animated: false)
         openWork?.cancel()
         if fullPanel == nil {
